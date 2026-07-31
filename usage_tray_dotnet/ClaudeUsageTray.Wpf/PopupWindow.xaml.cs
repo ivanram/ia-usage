@@ -219,7 +219,13 @@ public partial class PopupWindow : Window
 
         if (bar.ResetAt is { } resetAt)
         {
-            var reset = new TextBlock { Text = $"Se reinicia {TimeFormat.ResetLine(resetAt)}", FontSize = 11, Margin = new Thickness(0, 5, 0, 0), Foreground = _textSecondary };
+            // Short windows (Claude's rolling 5-hour limit, say) get a
+            // precise countdown; anything a day or more out keeps the
+            // calendar-style "el 5 de agosto (en 4 días)" phrasing.
+            var resetText = resetAt - DateTimeOffset.Now < TimeSpan.FromDays(1)
+                ? TimeFormat.ResetCountdown(resetAt)
+                : TimeFormat.ResetLine(resetAt);
+            var reset = new TextBlock { Text = $"Se reinicia {resetText}", FontSize = 11, Margin = new Thickness(0, 5, 0, 0), Foreground = _textSecondary };
             stack.Children.Add(reset);
         }
 

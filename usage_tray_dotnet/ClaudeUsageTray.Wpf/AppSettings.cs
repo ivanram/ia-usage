@@ -18,7 +18,7 @@ public enum AppTheme
 
 public sealed class AppSettings
 {
-    public int RefreshMinutes { get; set; } = 5;
+    public int RefreshMinutes { get; set; } = 10;
     public bool ShowClaude { get; set; } = true;
     public bool ShowChatGpt { get; set; } = false;
     public bool ShowGrok { get; set; } = false;

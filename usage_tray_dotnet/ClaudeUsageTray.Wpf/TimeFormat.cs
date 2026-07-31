@@ -33,6 +33,30 @@ internal static class TimeFormat
         return $"{datePart} ({relativePart})";
     }
 
+    /// <summary>
+    /// "en 4:32 h" / "en 20 minutos" / "ya disponible" — a precise
+    /// countdown for short (same-day) reset windows, like Claude's
+    /// rolling 5-hour limit. The calendar-style ResetLine ("el 5 de
+    /// agosto (en 4 h)") reads fine for a reset days away, but for
+    /// something resetting later today it's needlessly roundabout
+    /// compared to just counting down.
+    /// </summary>
+    public static string ResetCountdown(DateTimeOffset target)
+    {
+        var span = target - DateTimeOffset.Now;
+        if (span <= TimeSpan.Zero) return "ya disponible";
+
+        if (span.TotalHours >= 1)
+        {
+            var hours = (int)span.TotalHours;
+            var minutes = span.Minutes;
+            return $"en {hours}:{minutes:D2} h";
+        }
+
+        var mins = Math.Max(1, (int)span.TotalMinutes);
+        return $"en {mins} minuto{(mins == 1 ? "" : "s")}";
+    }
+
     /// <summary>"faltan 3 días, 2 h" / "faltan 45 min" / "ya disponible".</summary>
     public static string Relative(DateTimeOffset target)
     {
