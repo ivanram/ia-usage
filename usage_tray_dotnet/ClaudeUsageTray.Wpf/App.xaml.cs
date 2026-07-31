@@ -19,6 +19,16 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // This launch might be the temp-downloaded new build finishing an
+        // update on the old instance's behalf — that has to run even while
+        // the old process (and its single-instance mutex) is still alive,
+        // so it's handled before the mutex check below, not after.
+        if (UpdateService.TryHandleApplyUpdate(e.Args))
+        {
+            Shutdown();
+            return;
+        }
+
         _singleInstanceMutex = new Mutex(true, "ClaudeUsageTray-SingleInstance-8f3b6b3a-9e0e-4b7a-9c2f-2b7b6e6b6a1a", out var createdNew);
         if (!createdNew)
         {
@@ -45,6 +55,7 @@ public partial class App : Application
         {
             _orchestrator = new TrayOrchestrator();
             _orchestrator.Start();
+            _ = UpdateService.CheckAndPromptAsync();
         }
         catch (Exception ex)
         {
