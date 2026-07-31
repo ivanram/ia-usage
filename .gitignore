@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# Runtime-generated files (never contain secrets, but are pure noise)
+status.txt
+crash.txt
+*_debug.txt
+
+# User settings (token lives only in %LOCALAPPDATA%, never in the repo,
+# but ignore just in case a settings.json ever ends up next to the exe)
+settings.json
