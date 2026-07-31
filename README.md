@@ -9,7 +9,7 @@
   cuánto llevas consumido de tus límites de Claude, ChatGPT y Grok.
 </p>
 
-## Qué hace
+### Qué hace
 
 <p align="right">
   <img align="right" src="docs/captura.png" alt="Captura de pantalla" />
@@ -23,7 +23,7 @@ Vive en la bandeja del sistema (junto al reloj) y, al pasar el ratón por encima
 
 No usa ninguna API de pago: lee los datos directamente de tu sesión ya iniciada en cada web, con una ventana de navegador (WebView2) aislada por servicio.
 
-## Instalación
+### Instalación
 
 1. Ve a la sección [Releases](../../releases) y descarga el `.exe` de la última versión.
 2. Ejecútalo. No hace falta instalar nada más — es autocontenido (no necesitas tener .NET instalado).
@@ -31,7 +31,7 @@ No usa ninguna API de pago: lee los datos directamente de tu sesión ya iniciada
 
 La app se actualiza sola: al arrancar comprueba si hay una versión más nueva en este repositorio y, si aceptas, se descarga y se reinstala ella misma — sin que tengas que volver a descargar nada a mano ni volver a iniciar sesión en ningún servicio.
 
-## Ajustes
+### Ajustes
 
 Clic derecho en el icono de la bandeja → **Ajustes**, o doble clic en el icono. Desde ahí puedes:
 
@@ -41,7 +41,7 @@ Clic derecho en el icono de la bandeja → **Ajustes**, o doble clic en el icono
 - Notificaciones (aviso + sonido) cuando un límite se reinicia.
 - Un bot de Telegram opcional: escríbele `/uso` en cualquier momento para consultar tu consumo actual sin abrir el PC.
 
-## Notas
+### Notas
 
 - Cada servicio usa un perfil de WebView2 aislado (`%LocalAppData%\ClaudeUsageTray\WebView2_<Servicio>`) — no comparte cookies con tu navegador normal, así que necesitas iniciar sesión una vez dentro de la propia app.
 - Gemini no está soportado: Google exige una cabecera de validación (`X-Browser-Validation`) que solo el binario nativo de Chrome puede calcular, así que su endpoint de uso es inalcanzable desde una WebView2 embebida — no es un límite técnico nuestro, es una barrera puesta a propósito por Google.
