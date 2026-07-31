@@ -81,6 +81,9 @@ public partial class SettingsWindow : Window
         using var captionIcon = IconFactory.BuildRobotIcon(18);
         CaptionIcon.Source = Imaging.CreateBitmapSourceFromHIcon(captionIcon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
 
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        VersionButton.Content = version is null ? "Uso de IA" : $"Uso de IA {version.Major}.{version.Minor}.{version.Build}";
+
         AddCard(GlyphIcon(IconGear), "General", BuildGeneralCard);
         AddCard(GlyphIcon(IconRefresh), "Actualización", BuildUpdateCard);
         AddCard(GlyphIcon(IconClock), "Panel emergente", BuildPopupModeCard);
@@ -538,5 +541,21 @@ public partial class SettingsWindow : Window
     {
         Saved = false;
         Close();
+    }
+
+    private async void OnVersionClick(object sender, RoutedEventArgs e)
+    {
+        VersionButton.IsEnabled = false;
+        var original = VersionButton.Content;
+        VersionButton.Content = "Buscando actualizaciones...";
+        try
+        {
+            await UpdateService.CheckAndPromptAsync(manualCheck: true);
+        }
+        finally
+        {
+            VersionButton.Content = original;
+            VersionButton.IsEnabled = true;
+        }
     }
 }

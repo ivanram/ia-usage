@@ -115,17 +115,31 @@ internal static class UpdateService
         catch { /* a leftover temp exe is harmless */ }
     }
 
-    /// <summary>Fire-and-forget from normal startup: checks once, and if a newer release exists, asks the user.</summary>
-    public static async Task CheckAndPromptAsync()
+    /// <summary>
+    /// Checks once, and if a newer release exists, asks the user. Silent
+    /// startup checks (manualCheck: false) that find nothing newer just
+    /// return — but a check the user explicitly asked for (clicking the
+    /// version label in Settings) says so either way, since a silent
+    /// no-op there would just look broken.
+    /// </summary>
+    public static async Task CheckAndPromptAsync(bool manualCheck = false)
     {
         try
         {
             var (version, downloadUrl) = await GetLatestReleaseAsync();
-            if (version is null || downloadUrl is null) return;
+            if (version is null || downloadUrl is null)
+            {
+                if (manualCheck) MessageBox.Show("No se ha podido comprobar si hay actualizaciones.", "Uso de IA", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
 
             var current = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
             Log($"current={current} latest={version}");
-            if (!IsNewer(version, current)) return;
+            if (!IsNewer(version, current))
+            {
+                if (manualCheck) MessageBox.Show("Ya tienes la última versión.", "Uso de IA", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
 
             var result = MessageBox.Show(
                 $"Hay una nueva versión disponible (v{version.Major}.{version.Minor}.{version.Build}).\n¿Quieres actualizarla ahora?",

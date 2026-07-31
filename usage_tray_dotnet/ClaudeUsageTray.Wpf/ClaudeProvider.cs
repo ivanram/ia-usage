@@ -53,9 +53,16 @@ public sealed class ClaudeProvider : IUsageProvider
         }
 
         var usage = root.GetProperty("usage");
-        var fiveHour = usage.GetProperty("five_hour").GetProperty("utilization").GetInt32();
+        var fiveHourObj = usage.GetProperty("five_hour");
+        var fiveHour = fiveHourObj.GetProperty("utilization").GetInt32();
         var sevenDay = usage.GetProperty("seven_day");
         var sevenDayPct = sevenDay.GetProperty("utilization").GetInt32();
+
+        DateTimeOffset? fiveHourReset = null;
+        if (fiveHourObj.TryGetProperty("resets_at", out var fiveHourResetsAt) && fiveHourResetsAt.ValueKind == JsonValueKind.String)
+        {
+            fiveHourReset = DateTimeOffset.Parse(fiveHourResetsAt.GetString()!).ToLocalTime();
+        }
 
         DateTimeOffset? weeklyReset = null;
         if (sevenDay.TryGetProperty("resets_at", out var resetsAt) && resetsAt.ValueKind == JsonValueKind.String)
@@ -90,7 +97,7 @@ public sealed class ClaudeProvider : IUsageProvider
             Ok = true,
             Bars =
             {
-                new UsageBar { Label = "Límite de 5 horas", Percent = fiveHour },
+                new UsageBar { Label = "Límite de 5 horas", Percent = fiveHour, ResetAt = fiveHourReset },
                 new UsageBar { Label = "Límite semanal", Percent = sevenDayPct, ResetAt = weeklyReset },
             },
             ExtraLine = creditsLine,
