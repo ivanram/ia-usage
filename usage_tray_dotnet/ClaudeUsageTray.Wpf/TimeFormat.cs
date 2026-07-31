@@ -34,27 +34,38 @@ internal static class TimeFormat
     }
 
     /// <summary>
-    /// "en 4:32 h" / "en 20 minutos" / "ya disponible" — a precise
-    /// countdown for short (same-day) reset windows, like Claude's
-    /// rolling 5-hour limit. The calendar-style ResetLine ("el 5 de
-    /// agosto (en 4 h)") reads fine for a reset days away, but for
-    /// something resetting later today it's needlessly roundabout
-    /// compared to just counting down.
+    /// "a las 3:00 am (en 1:55 horas)" / "a las 3:00 am (en 20 minutos)" /
+    /// "ya disponible" — precise clock time + countdown for short
+    /// (same-day) reset windows, like Claude's rolling 5-hour limit. The
+    /// calendar-style ResetLine ("el 5 de agosto (en 4 h)") reads fine
+    /// for a reset days away, but for something resetting later today
+    /// the actual clock time is more useful than a date.
     /// </summary>
     public static string ResetCountdown(DateTimeOffset target)
     {
         var span = target - DateTimeOffset.Now;
         if (span <= TimeSpan.Zero) return "ya disponible";
 
+        var local = target.ToLocalTime();
+        var hour12 = local.Hour % 12;
+        if (hour12 == 0) hour12 = 12;
+        var ampm = local.Hour < 12 ? "am" : "pm";
+        var timePart = $"a las {hour12}:{local.Minute:D2} {ampm}";
+
+        string relativePart;
         if (span.TotalHours >= 1)
         {
             var hours = (int)span.TotalHours;
             var minutes = span.Minutes;
-            return $"en {hours}:{minutes:D2} h";
+            relativePart = $"en {hours}:{minutes:D2} horas";
+        }
+        else
+        {
+            var mins = Math.Max(1, (int)span.TotalMinutes);
+            relativePart = $"en {mins} minuto{(mins == 1 ? "" : "s")}";
         }
 
-        var mins = Math.Max(1, (int)span.TotalMinutes);
-        return $"en {mins} minuto{(mins == 1 ? "" : "s")}";
+        return $"{timePart} ({relativePart})";
     }
 
     /// <summary>"faltan 3 días, 2 h" / "faltan 45 min" / "ya disponible".</summary>
