@@ -2,6 +2,10 @@
 bin/
 obj/
 publish/
+publish_tmp/
+
+# Packaged EXEs are distributed as GitHub Release assets, not repo content
+Releases/
 
 # Visual Studio / Rider
 .vs/

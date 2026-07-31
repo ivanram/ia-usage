@@ -41,6 +41,18 @@ internal static class NativeScreenHelper
     [DllImport("user32.dll")]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NOTIFYICONIDENTIFIER
+    {
+        public uint cbSize;
+        public IntPtr hWnd;
+        public uint uID;
+        public Guid guidItem;
+    }
+
+    [DllImport("shell32.dll", SetLastError = true)]
+    private static extern int Shell_NotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out RECT iconLocation);
+
     private const uint MONITOR_DEFAULTTONEAREST = 2;
 
     public static POINT GetCursorPosition()
@@ -60,4 +72,26 @@ internal static class NativeScreenHelper
         }
         return new RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 };
     }
+
+    /// <summary>
+    /// Real on-screen rect (physical pixels) of a tray icon registered with the
+    /// given GUID identifier. Used to detect genuine hover over the icon —
+    /// TaskbarIcon.IsMouseOver doesn't track it reliably since the icon isn't
+    /// an actual rendered WPF visual, just a native shell icon.
+    /// </summary>
+    public static bool TryGetTrayIconRect(Guid iconGuid, out RECT rect)
+    {
+        var id = new NOTIFYICONIDENTIFIER
+        {
+            cbSize = (uint)Marshal.SizeOf<NOTIFYICONIDENTIFIER>(),
+            hWnd = IntPtr.Zero,
+            uID = 0,
+            guidItem = iconGuid,
+        };
+        var hr = Shell_NotifyIconGetRect(ref id, out rect);
+        return hr == 0;
+    }
+
+    public static bool Contains(RECT r, POINT p) =>
+        p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom;
 }

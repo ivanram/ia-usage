@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Windows;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -51,13 +52,21 @@ public sealed class WebViewUsageHost : Window
         };
     }
 
-    private static readonly string DebugFile = Path.Combine(AppContext.BaseDirectory, "webview_debug.txt");
+    private static readonly string DebugFile = Path.Combine(Paths.LogsDir, "webview_debug.txt");
     private static void Log(string msg) => File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n");
 
     public async Task InitializeAsync()
     {
         Log($"[{Title}] InitializeAsync: showing off-screen to force layout...");
         Show();
+        // Windows clamps a window positioned entirely outside every
+        // monitor back onto the visible desktop (usually leaving just a
+        // sliver of its title bar poking up above the taskbar) — that's
+        // what the -32000/-32000 parking spot alone produced. Show() has
+        // already done its job (forced the real layout/Loaded pass
+        // WebView2 needs), so immediately hide the window for real instead
+        // of leaving it "shown" somewhere Windows decided was valid.
+        Hide();
         var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         Log($"[{Title}] HWND={handle}");
 
@@ -100,6 +109,24 @@ public sealed class WebViewUsageHost : Window
     }
 
     /// <summary>
+    /// Some providers' "am I logged in" signal isn't reliable on its own —
+    /// grok.com's rate-limits endpoint, for instance, returns 200 with a
+    /// small anonymous/guest allowance instead of 401 when logged out,
+    /// which looked exactly like a successful fetch and closed the login
+    /// window before the user had typed anything. A real auth/session
+    /// cookie is a much harder thing to fake, so providers that hit this
+    /// can require one before trusting an otherwise-successful fetch.
+    /// </summary>
+    public async Task<bool> HasAuthCookieAsync(string url)
+    {
+        var cookies = await WebView.CoreWebView2.CookieManager.GetCookiesAsync(url);
+        return cookies.Any(c =>
+            c.Name.Contains("auth", StringComparison.OrdinalIgnoreCase) ||
+            c.Name.Contains("session", StringComparison.OrdinalIgnoreCase) ||
+            c.Name.Contains("sso", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// Runs <paramref name="kickoffScript"/> (which must eventually assign its
     /// JSON-string result to <paramref name="resultExpression"/>, e.g. a
     /// window property) and polls that expression until it stops being
@@ -108,7 +135,7 @@ public sealed class WebViewUsageHost : Window
     /// </summary>
     public async Task<string?> RunScriptForResultAsync(string kickoffScript, string resultExpression, int timeoutMs = 9000)
     {
-        var debugFile = Path.Combine(AppContext.BaseDirectory, "webview_debug.txt");
+        var debugFile = Path.Combine(Paths.LogsDir, "webview_debug.txt");
         if (!IsReady)
         {
             File.AppendAllText(debugFile, $"{DateTime.Now:O} [{Title}] IsReady=false, bailing out\n");

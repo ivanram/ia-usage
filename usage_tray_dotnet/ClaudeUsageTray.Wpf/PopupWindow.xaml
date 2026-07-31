@@ -8,33 +8,22 @@
         ShowInTaskbar="False"
         Topmost="True"
         ResizeMode="NoResize"
-        SizeToContent="WidthAndHeight"
-        WindowStartupLocation="Manual"
-        Deactivated="OnDeactivated">
-    <Border x:Name="RootBorder"
-            CornerRadius="14"
-            Background="{DynamicResource MaterialDesignPaper}"
-            RenderTransformOrigin="0.5,0.5"
-            Opacity="0">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.25" Color="Black" />
-        </Border.Effect>
-        <Border.RenderTransform>
-            <TranslateTransform x:Name="EntranceTransform" Y="12" />
-        </Border.RenderTransform>
-        <Border.Resources>
-            <Storyboard x:Key="EntranceStoryboard">
-                <DoubleAnimation Storyboard.TargetProperty="Opacity"
-                                  From="0" To="1" Duration="0:0:0.18" />
-                <DoubleAnimation Storyboard.TargetName="EntranceTransform"
-                                  Storyboard.TargetProperty="Y"
-                                  From="12" To="0" Duration="0:0:0.22">
-                    <DoubleAnimation.EasingFunction>
-                        <CubicEase EasingMode="EaseOut" />
-                    </DoubleAnimation.EasingFunction>
-                </DoubleAnimation>
-            </Storyboard>
-        </Border.Resources>
-        <StackPanel x:Name="ContentHost" Margin="20" MinWidth="280" />
-    </Border>
+        SizeToContent="Manual"
+        WindowStartupLocation="Manual">
+    <!--
+    The extra Grid margin below is not decorative padding — it's room for
+    the DropShadowEffect to fade out fully before hitting the window's own
+    rectangular bounds. AllowsTransparency windows clip hard at their edge;
+    without this margin the shadow's blur gets cut into a hard rectangle
+    right past the rounded corners, which is exactly what read as "square
+    corners still visible" on a window that's supposedly rounded.
+    -->
+    <Grid Margin="18">
+        <Border x:Name="RootBorder" CornerRadius="16">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black" />
+            </Border.Effect>
+            <StackPanel x:Name="ContentHost" Margin="20" />
+        </Border>
+    </Grid>
 </Window>

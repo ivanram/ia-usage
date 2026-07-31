@@ -1,7 +1,38 @@
+using System.Globalization;
+
 namespace ClaudeUsageTray;
 
 internal static class TimeFormat
 {
+    private static readonly CultureInfo Es = new("es-ES");
+
+    /// <summary>"el 5 de agosto (en 5 días)" / "el 5 de agosto (en 3 h)" / "ya disponible".</summary>
+    public static string ResetLine(DateTimeOffset target)
+    {
+        var span = target - DateTimeOffset.Now;
+        if (span <= TimeSpan.Zero) return "ya disponible";
+
+        var local = target.ToLocalTime();
+        var datePart = $"el {local.Day} de {local.ToString("MMMM", Es)}";
+
+        string relativePart;
+        if (span.TotalDays >= 1)
+        {
+            var days = (int)span.TotalDays;
+            relativePart = $"en {days} día{(days == 1 ? "" : "s")}";
+        }
+        else if (span.TotalHours >= 1)
+        {
+            relativePart = $"en {(int)span.TotalHours} h";
+        }
+        else
+        {
+            relativePart = $"en {Math.Max(1, (int)span.TotalMinutes)} min";
+        }
+
+        return $"{datePart} ({relativePart})";
+    }
+
     /// <summary>"faltan 3 días, 2 h" / "faltan 45 min" / "ya disponible".</summary>
     public static string Relative(DateTimeOffset target)
     {
@@ -36,5 +67,16 @@ internal static class TimeFormat
         if (span.TotalDays >= 1) return $"{(int)span.TotalDays}d {span.Hours}h";
         if (span.TotalHours >= 1) return $"{(int)span.TotalHours}h {span.Minutes}min";
         return $"{Math.Max(1, (int)span.TotalMinutes)}min";
+    }
+
+    /// <summary>"actualizado hace un momento" / "hace 3 min" / "hace 2 h".</summary>
+    public static string Ago(DateTime past)
+    {
+        var span = DateTime.Now - past;
+        if (span < TimeSpan.FromSeconds(30)) return "hace un momento";
+        if (span.TotalMinutes < 1) return "hace unos segundos";
+        if (span.TotalHours < 1) return $"hace {(int)span.TotalMinutes} min";
+        if (span.TotalDays < 1) return $"hace {(int)span.TotalHours} h";
+        return $"hace {(int)span.TotalDays} d";
     }
 }

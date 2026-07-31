@@ -1,20 +1,34 @@
 using System.IO;
+using System.Media;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using H.NotifyIcon;
-using MaterialDesignThemes.Wpf;
 
 namespace ClaudeUsageTray;
 
 public sealed class TrayOrchestrator : IDisposable
 {
-    private static readonly string StatusFile = Path.Combine(AppContext.BaseDirectory, "status.txt");
-    private const int HoverThresholdMs = 2000;
+    private static readonly string StatusFile = Path.Combine(Paths.LogsDir, "status.txt");
+    private static readonly Guid TrayIconGuid = new("699af4c8-abef-4fbe-bade-983a54433124");
 
-    private readonly List<IUsageProvider> _providers = new() { new ClaudeProvider(), new ChatGptProvider() };
+    private readonly List<IUsageProvider> _providers = new() { new ClaudeProvider(), new ChatGptProvider(), new GrokProvider() };
     private readonly Dictionary<string, WebViewUsageHost> _hosts = new();
+    // Caches the in-flight creation Task, not just the finished host — a
+    // concurrent RefreshAllAsync tick and a manual "Iniciar sesión" click
+    // (or two overlapping refresh ticks) could both see an empty _hosts
+    // dictionary and each start their own WebViewUsageHost for the same
+    // provider before either finished, since the old check-then-create
+    // wasn't atomic. That produced two live host windows for one provider
+    // (confirmed in webview_debug.txt: two "InitializeAsync" calls for
+    // Grok seconds apart) — whichever one lost the race got orphaned but
+    // could still be visible, making the login window look like it
+    // randomly closed when the other instance took over.
+    private readonly Dictionary<string, Task<WebViewUsageHost>> _hostTasks = new();
     private readonly Dictionary<string, UsageSnapshot> _lastSnapshots = new();
+    private readonly Dictionary<string, int> _lastPercents = new();
+    private static SoundPlayer? _chimePlayer;
+    private DateTime? _lastUpdated;
 
     private TaskbarIcon _trayIcon = null!;
     private readonly DispatcherTimer _refreshTimer = new();
@@ -37,12 +51,21 @@ public sealed class TrayOrchestrator : IDisposable
 
         _trayIcon = new TaskbarIcon
         {
+            Id = TrayIconGuid,
             Icon = IconFactory.BuildRobotIcon(),
-            ToolTipText = "Usage Tray: iniciando...",
+            ToolTipText = _settings.PopupMode == PopupMode.Rich ? "Uso de IA" : "Usage Tray: iniciando...",
             ContextMenu = BuildContextMenu(),
         };
         _trayIcon.TrayLeftMouseUp += (s, e) => OnTrayLeftClick();
         _trayIcon.TrayMouseDoubleClick += (s, e) => OpenSettings();
+
+        // TaskbarIcon normally creates its native icon from its own Loaded
+        // event, which only fires once it's parented into a visual tree.
+        // We construct it standalone in code, so it never loads on its own —
+        // force creation explicitly instead.
+        _trayIcon.ForceCreate(enablesEfficiencyMode: false);
+        var registered = NativeScreenHelper.TryGetTrayIconRect(TrayIconGuid, out var iconRect);
+        Log($"[tray] ForceCreate done. Shell_NotifyIconGetRect success={registered} rect=({iconRect.Left},{iconRect.Top},{iconRect.Right},{iconRect.Bottom})");
 
         _hoverTimer.Tick += (s, e) => PollHover();
         _hoverTimer.Start();
@@ -57,23 +80,58 @@ public sealed class TrayOrchestrator : IDisposable
         _ = RefreshAllAsync();
     }
 
+    private int _awayMs;
+    private const int AwayGraceMs = 700;
+
     private void PollHover()
     {
-        if (_settings.PopupMode != PopupMode.Rich || _popup.IsVisible)
+        if (_settings.PopupMode != PopupMode.Rich)
         {
             _hoverMs = 0;
             _hoverTriggered = false;
             return;
         }
 
-        // TaskbarIcon is a real FrameworkElement under the hood, and
-        // H.NotifyIcon keeps IsMouseOver in sync with the actual tray icon
-        // hover state — no need for the Shell_NotifyIconGetRect P/Invoke
-        // hack the WinForms version needed.
-        if (_trayIcon.IsMouseOver)
+        // TaskbarIcon.IsMouseOver doesn't track real hover state: the tray
+        // icon is a native shell icon, not an actually-rendered WPF visual,
+        // so WPF's own mouse-over bookkeeping never applies to it. Instead
+        // we ask the shell directly for the icon's on-screen rect (by the
+        // fixed GUID assigned in Start()) and poll the real cursor position
+        // against it — the same technique the WinForms build used.
+        var cursor = NativeScreenHelper.GetCursorPosition();
+        var isOverIcon = NativeScreenHelper.TryGetTrayIconRect(TrayIconGuid, out var iconRect)
+            && NativeScreenHelper.Contains(iconRect, cursor);
+
+        if (_popup.IsVisible)
+        {
+            // Auto-dismiss once the cursor has been away from both the icon
+            // and the panel itself for a short grace period — long enough to
+            // move the cursor from the icon up into the panel without it
+            // flickering shut mid-transition.
+            if (isOverIcon || IsCursorOverPopup(cursor))
+            {
+                _awayMs = 0;
+            }
+            else
+            {
+                _awayMs += (int)_hoverTimer.Interval.TotalMilliseconds;
+                if (_awayMs >= AwayGraceMs)
+                {
+                    Log($"[away-hide] cursor=({cursor.X},{cursor.Y}) isOverIcon={isOverIcon} popup=({_popup.Left},{_popup.Top},{_popup.ActualWidth}x{_popup.ActualHeight}) IsVisible={_popup.IsVisible}");
+                    _popup.Hide();
+                    _awayMs = 0;
+                    _hoverMs = 0;
+                    _hoverTriggered = false;
+                }
+            }
+            return;
+        }
+
+        if (isOverIcon)
         {
             _hoverMs += (int)_hoverTimer.Interval.TotalMilliseconds;
-            if (_hoverMs >= HoverThresholdMs && !_hoverTriggered)
+            var thresholdMs = Math.Max(0, _settings.HoverDelaySeconds) * 1000;
+            if (_hoverMs >= thresholdMs && !_hoverTriggered)
             {
                 _hoverTriggered = true;
                 ShowPopupNow();
@@ -84,6 +142,25 @@ public sealed class TrayOrchestrator : IDisposable
             _hoverMs = 0;
             _hoverTriggered = false;
         }
+    }
+
+    private bool IsCursorOverPopup(NativeScreenHelper.POINT cursor)
+    {
+        // A suspiciously tiny size means a layout pass hasn't caught up
+        // with a just-applied resize (or produced a bad measurement) —
+        // treat that as "can't tell" and assume the cursor IS still over
+        // it rather than risk closing a panel the user is actively
+        // looking at because of a transient bad reading.
+        if (_popup.ActualWidth < 50 || _popup.ActualHeight < 50) return true;
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(_popup);
+        var rect = new NativeScreenHelper.RECT
+        {
+            Left = (int)(_popup.Left * dpi.DpiScaleX),
+            Top = (int)(_popup.Top * dpi.DpiScaleY),
+            Right = (int)((_popup.Left + _popup.ActualWidth) * dpi.DpiScaleX),
+            Bottom = (int)((_popup.Top + _popup.ActualHeight) * dpi.DpiScaleY),
+        };
+        return NativeScreenHelper.Contains(rect, cursor);
     }
 
     private void OnTrayLeftClick()
@@ -101,9 +178,13 @@ public sealed class TrayOrchestrator : IDisposable
 
     private void ShowPopupNow()
     {
-        _popup.Render(_providers.Where(IsEnabled).Select(p => _lastSnapshots.TryGetValue(p.Name, out var snap)
-            ? snap
-            : new UsageSnapshot { ServiceName = p.Name, Ok = false, ErrorMessage = "Cargando..." }));
+        var enabled = _providers.Where(IsEnabled).ToList();
+        // Only ever render services that have real data (success or a real
+        // fetch failure) — never a synthetic "loading" placeholder. If a
+        // service isn't ready yet it's simply left out; RefreshAllAsync
+        // re-renders the open popup the moment its data arrives.
+        var ready = enabled.Where(p => _lastSnapshots.ContainsKey(p.Name)).Select(p => _lastSnapshots[p.Name]);
+        _popup.Render(ready, hasAnyEnabled: enabled.Count > 0, lastUpdated: _lastUpdated);
         _popup.ShowNearCursor();
     }
 
@@ -111,6 +192,7 @@ public sealed class TrayOrchestrator : IDisposable
     {
         ClaudeProvider => _settings.ShowClaude,
         ChatGptProvider => _settings.ShowChatGpt,
+        GrokProvider => _settings.ShowGrok,
         _ => false,
     };
 
@@ -127,7 +209,7 @@ public sealed class TrayOrchestrator : IDisposable
         menu.Items.Add(settingsItem);
 
         var loginMenu = new MenuItem { Header = "Iniciar sesión" };
-        foreach (var provider in _providers)
+        foreach (var provider in _providers.Where(p => p.SupportsLogin))
         {
             var item = new MenuItem { Header = provider.Name };
             item.Click += async (s, e) => await LoginAsync(provider);
@@ -144,9 +226,17 @@ public sealed class TrayOrchestrator : IDisposable
         return menu;
     }
 
+    private SettingsWindow? _openSettingsWindow;
+
     private void OpenSettings()
     {
         _popup.Hide();
+
+        if (_openSettingsWindow is not null)
+        {
+            _openSettingsWindow.Activate();
+            return;
+        }
 
         var window = new SettingsWindow(
             _settings,
@@ -155,10 +245,18 @@ public sealed class TrayOrchestrator : IDisposable
             {
                 var provider = _providers.First(p => p.Name == name);
                 _ = LoginAsync(provider);
-            });
+            },
+            previewTheme: ThemeHelper.Apply);
+        _openSettingsWindow = window;
 
         window.ShowDialog();
-        if (!window.Saved) return;
+        _openSettingsWindow = null;
+
+        if (!window.Saved)
+        {
+            ApplyTheme(); // revert any live theme preview back to the saved setting
+            return;
+        }
 
         _settings = window.Result;
         _settings.Save();
@@ -170,11 +268,10 @@ public sealed class TrayOrchestrator : IDisposable
 
     private void ApplyTheme()
     {
-        var isDark = ThemeHelper.ResolveIsDark(_settings.Theme);
-        var paletteHelper = new PaletteHelper();
-        var theme = paletteHelper.GetTheme();
-        theme.SetBaseTheme(isDark ? BaseTheme.Dark : BaseTheme.Light);
-        paletteHelper.SetTheme(theme);
+        ThemeHelper.Apply(_settings.Theme);
+        ThemeHelper.ApplyAccent(_settings.AccentColor);
+        _popup.FlatBarColorHex = _settings.AccentColor == AppSettings.OriginalAccentSentinel ? null : _settings.AccentColor;
+        _popup.AnimationsEnabled = _settings.AnimationsEnabled;
     }
 
     private void ApplyTelegramSettings()
@@ -199,13 +296,25 @@ public sealed class TrayOrchestrator : IDisposable
         _refreshTimer.Start();
     }
 
-    private static readonly string DebugFile = Path.Combine(AppContext.BaseDirectory, "orchestrator_debug.txt");
+    private static readonly string DebugFile = Path.Combine(Paths.LogsDir, "orchestrator_debug.txt");
     private static void Log(string msg) => File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n");
 
-    private async Task<WebViewUsageHost> EnsureHostAsync(IUsageProvider provider)
+    private Task<WebViewUsageHost> EnsureHostAsync(IUsageProvider provider)
     {
-        if (_hosts.TryGetValue(provider.Name, out var existing)) return existing;
+        // Reuse the in-flight Task itself (not just the finished result) so
+        // two overlapping callers — a refresh tick and a manual login click,
+        // say — await the SAME host creation instead of each racing to
+        // create their own. See the _hostTasks field comment for the bug
+        // this caused.
+        if (_hostTasks.TryGetValue(provider.Name, out var existing)) return existing;
 
+        var task = CreateHostAsync(provider);
+        _hostTasks[provider.Name] = task;
+        return task;
+    }
+
+    private async Task<WebViewUsageHost> CreateHostAsync(IUsageProvider provider)
+    {
         Log($"[{provider.Name}] creating host...");
         var host = new WebViewUsageHost(provider.Name, provider.ProfileFolderName);
         Log($"[{provider.Name}] calling InitializeAsync...");
@@ -261,27 +370,107 @@ public sealed class TrayOrchestrator : IDisposable
             return;
         }
 
-        foreach (var provider in enabled)
+        if (_popup.IsVisible) _popup.SetRefreshing(true);
+        try
         {
-            var host = await EnsureHostAsync(provider);
-            Log($"[{provider.Name}] fetching with retry...");
-            var snap = await FetchWithRetryAsync(provider, host);
-            Log($"[{provider.Name}] fetch result Ok={snap.Ok} Error={snap.ErrorMessage}");
-            _lastSnapshots[provider.Name] = snap;
-
-            if (!snap.Ok && !host.IsVisible)
+            foreach (var provider in enabled)
             {
-                _ = LoginAsync(provider);
+                var host = await EnsureHostAsync(provider);
+                Log($"[{provider.Name}] fetching with retry...");
+                var snap = await FetchWithRetryAsync(provider, host);
+                Log($"[{provider.Name}] fetch result Ok={snap.Ok} Error={snap.ErrorMessage}");
+                if (snap.Ok) CheckForReset(provider.Name, snap);
+                _lastSnapshots[provider.Name] = snap;
+
+                if (!snap.Ok && !host.IsVisible && provider.SupportsLogin)
+                {
+                    _ = LoginAsync(provider);
+                }
+
+                // Re-render an already-open popup as each service's real data
+                // lands, instead of waiting for the whole batch — this is what
+                // replaces the old "Cargando..." placeholder for a service that
+                // wasn't ready yet when the popup was first opened. PopupWindow
+                // itself skips re-animating any bar whose value hasn't changed
+                // since the last render, so a provider that already had data
+                // doesn't replay its animation just because a later provider
+                // arrived — only render exactly once per provider here, no
+                // separate render after the loop repeating the same data.
+                _lastUpdated = DateTime.Now;
+                if (_popup.IsVisible)
+                {
+                    var ready = enabled.Where(p => _lastSnapshots.ContainsKey(p.Name)).Select(p => _lastSnapshots[p.Name]);
+                    _popup.Render(ready, hasAnyEnabled: true, lastUpdated: _lastUpdated);
+                }
             }
+
+            UpdateTrayText();
+            WriteStatusFile();
         }
-
-        UpdateTrayText();
-        WriteStatusFile();
-
-        if (_popup.IsVisible)
+        finally
         {
-            _popup.Render(enabled.Select(p => _lastSnapshots[p.Name]));
+            if (_popup.IsVisible) _popup.SetRefreshing(false);
         }
+    }
+
+    /// <summary>
+    /// A reset shows up as a bar's percent dropping compared to the last
+    /// reading — usage only ever climbs within a window otherwise. The
+    /// small margin (4 points) and floor (previous reading >= 10%) keep
+    /// ordinary jitter from a re-fetch from being mistaken for a reset.
+    /// Nothing fires on the very first reading for a bar (no baseline yet).
+    /// </summary>
+    private void CheckForReset(string serviceName, UsageSnapshot snap)
+    {
+        if (!IsNotifyEnabled(serviceName)) return;
+
+        var resetDetected = false;
+        foreach (var bar in snap.Bars)
+        {
+            var key = $"{serviceName}|{bar.Label}";
+            if (_lastPercents.TryGetValue(key, out var prev) && prev >= 10 && bar.Percent < prev - 4)
+            {
+                resetDetected = true;
+            }
+            _lastPercents[key] = bar.Percent;
+        }
+
+        if (resetDetected) ShowResetToast(serviceName);
+    }
+
+    private bool IsNotifyEnabled(string serviceName) => serviceName switch
+    {
+        "Claude" => _settings.NotifyResetClaude,
+        "ChatGPT" => _settings.NotifyResetChatGpt,
+        "Grok" => _settings.NotifyResetGrok,
+        _ => false,
+    };
+
+    private void ShowResetToast(string serviceName)
+    {
+        var toast = new ToastWindow();
+        toast.ShowNear(serviceName, $"El uso de {serviceName} se ha reseteado ✨");
+        if (_settings.NotifySoundEnabled) PlayChime();
+    }
+
+    private static void PlayChime()
+    {
+        try
+        {
+            _chimePlayer ??= LoadChimePlayer();
+            _chimePlayer?.Play();
+        }
+        catch
+        {
+            // Best effort — a missing/broken sound device shouldn't affect anything else.
+        }
+    }
+
+    private static SoundPlayer? LoadChimePlayer()
+    {
+        var uri = new Uri("pack://application:,,,/ClaudeUsageTray;component/Assets/chime.wav");
+        var streamInfo = Application.GetResourceStream(uri);
+        return streamInfo is null ? null : new SoundPlayer(streamInfo.Stream);
     }
 
     private void UpdateTrayText()
@@ -289,7 +478,11 @@ public sealed class TrayOrchestrator : IDisposable
         var enabled = _providers.Where(IsEnabled).ToList();
         if (_settings.PopupMode == PopupMode.Rich)
         {
-            _trayIcon.ToolTipText = "Usage Tray";
+            // Windows always shows some tooltip bubble on hover for a
+            // registered tray icon — an empty string just produces an empty
+            // bubble, it doesn't suppress it. So this is the app name, not
+            // usage data (the custom panel handles that).
+            _trayIcon.ToolTipText = "Uso de IA";
             return;
         }
 
