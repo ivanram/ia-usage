@@ -38,9 +38,13 @@ internal static class ChartBuilder
             return host;
         }
 
-        const double padTop = 8, padBottom = 20, padLeft = 4, padRight = 4;
-        var plotWidth = width - padLeft - padRight;
-        var plotHeight = height - padTop - padBottom;
+        // padLeft leaves room for the "0%/50%/100%" axis labels; padBottom
+        // for a row of hourly time labels under the plot; padTop for a
+        // compact start-date label above it (hours are covered by the
+        // per-gridline labels below, so only the date needs calling out once).
+        const double padTop = 18, padBottom = 16, padLeft = 30, padRight = 6;
+        var plotWidth = Math.Max(1, width - padLeft - padRight);
+        var plotHeight = Math.Max(1, height - padTop - padBottom);
 
         foreach (var pct in new[] { 0, 50, 100 })
         {
@@ -54,15 +58,35 @@ internal static class ChartBuilder
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
             });
+            host.Children.Add(new TextBlock
+            {
+                Text = $"{pct}%",
+                Foreground = textBrush, Opacity = 0.65, FontSize = 9,
+                Width = padLeft - 4, TextAlignment = TextAlignment.Right,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, y - 6, 0, 0),
+            });
         }
 
         var minTime = points[0].RecordedAt;
         var maxTime = points[^1].RecordedAt;
         var spanSeconds = Math.Max(1, (maxTime - minTime).TotalSeconds);
 
-        // One dashed vertical line per hour boundary crossed, so it's easy
-        // to eyeball roughly when a jump happened instead of only reading
-        // it off the start/end labels.
+        host.Children.Add(new TextBlock
+        {
+            Text = minTime.ToLocalTime().ToString("d MMM"),
+            Foreground = textBrush, Opacity = 0.55, FontSize = 9,
+            HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(padLeft, 0, 0, 0),
+        });
+
+        // One dashed vertical line per hour boundary crossed, each labeled
+        // with its clock time — but only when there's enough pixel room
+        // since the previously drawn label, so dense data doesn't turn into
+        // an unreadable smear of overlapping text.
+        const double minLabelSpacing = 32;
+        var lastLabelX = double.NegativeInfinity;
         var localMin = minTime.ToLocalTime();
         var hourCursor = new DateTimeOffset(localMin.Year, localMin.Month, localMin.Day, localMin.Hour, 0, 0, localMin.Offset).AddHours(1);
         while (hourCursor < maxTime)
@@ -77,6 +101,21 @@ internal static class ChartBuilder
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
             });
+
+            if (x - lastLabelX >= minLabelSpacing && x <= width - padRight - 16)
+            {
+                host.Children.Add(new TextBlock
+                {
+                    Text = hourCursor.ToString("HH:mm"),
+                    Foreground = textBrush, Opacity = 0.6, FontSize = 9,
+                    Width = 30, TextAlignment = TextAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(x - 15, padTop + plotHeight + 3, 0, 0),
+                });
+                lastLabelX = x;
+            }
+
             hourCursor = hourCursor.AddHours(1);
         }
 
@@ -103,19 +142,6 @@ internal static class ChartBuilder
             StrokeLineJoin = PenLineJoin.Round,
             StrokeStartLineCap = PenLineCap.Round,
             StrokeEndLineCap = PenLineCap.Round,
-        });
-
-        host.Children.Add(new TextBlock
-        {
-            Text = minTime.ToLocalTime().ToString("d MMM HH:mm"),
-            Foreground = textBrush, Opacity = 0.6, FontSize = 10,
-            HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom,
-        });
-        host.Children.Add(new TextBlock
-        {
-            Text = maxTime.ToLocalTime().ToString("d MMM HH:mm"),
-            Foreground = textBrush, Opacity = 0.6, FontSize = 10,
-            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
         });
 
         AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush);
@@ -191,9 +217,10 @@ internal static class ChartBuilder
     }
 
     /// <summary>
-    /// One header (icon + service name) and chart per service, stacked —
-    /// used for the Telegram /stats image, which reads fine tall/portrait
-    /// since it's just scrolled like any other photo message.
+    /// One header (icon + service name) and chart per service, stacked
+    /// vertically — used both by the desktop Stats window (a timeline reads
+    /// naturally growing downward) and the Telegram /stats image (which is
+    /// just scrolled like any other photo message).
     /// </summary>
     public static StackPanel BuildServiceBlocks(
         IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
@@ -219,42 +246,6 @@ internal static class ChartBuilder
             block.Children.Add(chart);
 
             container.Children.Add(block);
-        }
-        return container;
-    }
-
-    /// <summary>
-    /// Same idea as <see cref="BuildServiceBlocks"/> but arranged in a
-    /// wrapping grid instead of stacked — used for the desktop Stats
-    /// window, which is resizable and wants to make good use of whatever
-    /// landscape shape the user drags it into (e.g. two services per row)
-    /// rather than either running off the bottom or stretching one lone
-    /// row arbitrarily wide.
-    /// </summary>
-    public static WrapPanel BuildServiceColumns(
-        IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
-        double columnWidth, double chartHeight, double columnGap,
-        Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush)
-    {
-        var container = new WrapPanel();
-        for (var i = 0; i < serviceNames.Count; i++)
-        {
-            var serviceName = serviceNames[i];
-            var column = new StackPanel { Width = columnWidth, Margin = new Thickness(0, 0, columnGap, columnGap) };
-
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
-            var icon = ServiceIcons.Build(serviceName, 16, textPrimary);
-            icon.Margin = new Thickness(0, 0, 8, 0);
-            icon.VerticalAlignment = VerticalAlignment.Center;
-            header.Children.Add(icon);
-            header.Children.Add(new TextBlock { Text = serviceName, FontSize = 13, FontWeight = FontWeights.Medium, Foreground = textPrimary, VerticalAlignment = VerticalAlignment.Center });
-            column.Children.Add(header);
-
-            var points = historyStore.GetHistory(serviceName, since);
-            var chart = Build(points, columnWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"));
-            column.Children.Add(chart);
-
-            container.Children.Add(column);
         }
         return container;
     }

@@ -2,21 +2,19 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using MaterialDesignThemes.Wpf;
 
 namespace ClaudeUsageTray;
 
 public partial class StatsWindow : Window
 {
-    // "50% más ancha" than the old single-column, popup-matching width
-    // (288 content + 76 chrome = 364) — two of these plus the gap and the
-    // content margins lands close to that target while comfortably fitting
-    // two services per row.
-    private const double ColumnWidth = 240;
-    private const double ColumnGap = 16;
     private const double ChartHeight = 130;
     private const double AnchorGap = 12;
-    private const double DefaultHeight = 420;
+    // "50% más ancha" than the old popup-matching width, per the user's
+    // request — kept relative to the popup's own width so it scales
+    // sensibly regardless of DPI/monitor.
+    private const double WidthMultiplier = 1.5;
 
     private readonly List<string> _serviceNames;
     private readonly UsageHistoryStore _historyStore;
@@ -25,6 +23,8 @@ public partial class StatsWindow : Window
     private readonly double _defaultHeight;
     private readonly double _defaultLeft;
     private readonly double _defaultTop;
+
+    private DispatcherTimer? _resizeDebounceTimer;
 
     // Same reasoning as SettingsWindow's taskbar icon fields — built once
     // and kept alive for the window's lifetime, sent to Windows via
@@ -36,8 +36,9 @@ public partial class StatsWindow : Window
     /// <summary>
     /// <paramref name="anchorBounds"/> is the main popup's on-screen bounds
     /// at the moment Stats was opened from it — Stats opens just to its
-    /// left by default, at a fixed starting size the user can then resize
-    /// freely (see ResetSizeButton for getting back to this default).
+    /// left by default, matching the popup's height exactly and sitting
+    /// flush with its top edge, at a starting width the user can then
+    /// resize freely (see ResetSizeButton for getting back to this default).
     /// </summary>
     public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, Rect anchorBounds)
     {
@@ -46,10 +47,8 @@ public partial class StatsWindow : Window
         _historyStore = historyStore;
         Title = Strings.T("stats.title");
 
-        var columns = Math.Max(1, _serviceNames.Count);
-        var contentWidth = columns * ColumnWidth + Math.Max(0, columns - 1) * ColumnGap;
-        _defaultWidth = Math.Max(MinWidth, contentWidth + 40);
-        _defaultHeight = DefaultHeight;
+        _defaultWidth = Math.Max(MinWidth, anchorBounds.Width * WidthMultiplier);
+        _defaultHeight = Math.Max(MinHeight, anchorBounds.Height);
         _defaultLeft = anchorBounds.Left - _defaultWidth - AnchorGap;
         _defaultTop = anchorBounds.Top;
 
@@ -58,6 +57,35 @@ public partial class StatsWindow : Window
         Left = _defaultLeft;
         Top = _defaultTop;
 
+        Loaded += OnLoaded;
+        SizeChanged += OnSizeChanged;
+    }
+
+    private void OnLoaded(object? sender, RoutedEventArgs e)
+    {
+        Loaded -= OnLoaded;
+        Render();
+    }
+
+    /// <summary>
+    /// Debounced so dragging an edge doesn't rebuild the whole chart (with
+    /// its spline math and gridline layout) on every single pixel of
+    /// movement — only once the user pauses for a moment.
+    /// </summary>
+    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!IsLoaded) return;
+
+        _resizeDebounceTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _resizeDebounceTimer.Stop();
+        _resizeDebounceTimer.Tick -= OnResizeDebounceTick;
+        _resizeDebounceTimer.Tick += OnResizeDebounceTick;
+        _resizeDebounceTimer.Start();
+    }
+
+    private void OnResizeDebounceTick(object? sender, EventArgs e)
+    {
+        _resizeDebounceTimer!.Stop();
         Render();
     }
 
@@ -130,9 +158,16 @@ public partial class StatsWindow : Window
             return;
         }
 
+        // ContentHost is a ScrollViewer child with horizontal scrolling
+        // disabled, so its ActualWidth already tracks the window's current
+        // available content width — reading it here (instead of a fixed
+        // constant) is what makes the chart actually redraw wider/narrower
+        // when the user resizes the window.
+        var chartWidth = ContentHost.ActualWidth > 0 ? ContentHost.ActualWidth : _defaultWidth - 40;
+
         var since = DateTimeOffset.UtcNow.AddHours(-24);
-        var columns = ChartBuilder.BuildServiceColumns(_serviceNames, _historyStore, since,
-            ColumnWidth, ChartHeight, ColumnGap, textPrimary, textSecondary, accent, fillBrush, gridBrush);
-        ContentHost.Children.Add(columns);
+        var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since,
+            chartWidth, ChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush);
+        ContentHost.Children.Add(blocks);
     }
 }

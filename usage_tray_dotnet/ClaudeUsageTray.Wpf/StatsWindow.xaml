@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Estadísticas"
-        MinWidth="420" MinHeight="260"
+        MinWidth="340" MinHeight="220"
         WindowStartupLocation="Manual"
         SourceInitialized="OnSourceInitialized">
     <!--
