@@ -9,11 +9,16 @@ namespace ClaudeUsageTray;
 
 public partial class StatsWindow : Window
 {
-    private const double ChartWidth = 380;
+    // Matches PopupWindow's own content width (SingleColumnWidth) exactly,
+    // so the two windows read as a matched pair side by side rather than
+    // Stats looking like an unrelated dialog.
+    private const double ChartWidth = 288;
     private const double ChartHeight = 130;
+    private const double AnchorGap = 12;
 
     private readonly List<string> _serviceNames;
     private readonly UsageHistoryStore _historyStore;
+    private readonly Rect _anchorBounds;
 
     // Same reasoning as SettingsWindow's taskbar icon fields — built once
     // and kept alive for the window's lifetime, sent to Windows via
@@ -22,13 +27,35 @@ public partial class StatsWindow : Window
     private readonly System.Drawing.Icon _smallTaskbarIcon = IconFactory.BuildRobotIcon(16);
     private readonly System.Drawing.Icon _bigTaskbarIcon = IconFactory.BuildRobotIcon(32);
 
-    public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore)
+    /// <summary>
+    /// <paramref name="anchorBounds"/> is the main popup's on-screen bounds
+    /// at the moment Stats was opened from it (captured before the popup
+    /// hides) — Stats opens just to its left by default.
+    /// </summary>
+    public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, Rect anchorBounds)
     {
         InitializeComponent();
         _serviceNames = serviceNames;
         _historyStore = historyStore;
+        _anchorBounds = anchorBounds;
         Title = Strings.T("stats.title");
+
+        // Same lesson as ToastWindow's positioning bug: this window's real
+        // size isn't known until after its first layout pass, so it's
+        // parked off-screen and only moved into place once Loaded fires
+        // with ActualWidth/ActualHeight actually populated.
+        Left = -10000;
+        Top = -10000;
+        Loaded += OnLoadedPosition;
+
         Render();
+    }
+
+    private void OnLoadedPosition(object sender, RoutedEventArgs e)
+    {
+        Loaded -= OnLoadedPosition;
+        Left = _anchorBounds.Left - ActualWidth - AnchorGap;
+        Top = _anchorBounds.Top;
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)

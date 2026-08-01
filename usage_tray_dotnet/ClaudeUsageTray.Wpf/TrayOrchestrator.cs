@@ -358,6 +358,10 @@ public sealed class TrayOrchestrator : IDisposable
     /// </summary>
     private void OpenStats()
     {
+        // Captured before Hide() — the popup is only visible (and its
+        // Left/Top only meaningful) while this method's caller, its own
+        // "Estadísticas" button click, is still on the call stack.
+        var anchor = new Rect(_popup.Left, _popup.Top, _popup.ActualWidth, _popup.ActualHeight);
         _popup.Hide();
 
         if (_statsWindow is not null)
@@ -366,7 +370,7 @@ public sealed class TrayOrchestrator : IDisposable
             return;
         }
 
-        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore);
+        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore, anchor);
         _statsWindow.Closed += (s, e) => _statsWindow = null;
         _statsWindow.Show();
     }
