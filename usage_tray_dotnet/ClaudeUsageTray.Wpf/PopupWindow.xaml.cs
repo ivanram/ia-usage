@@ -4,6 +4,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Shapes;
 using MaterialDesignThemes.Wpf;
 
 namespace ClaudeUsageTray;
@@ -152,6 +153,7 @@ public partial class PopupWindow : Window
             : new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
 
         UpdatePinGlyphColor();
+        UpdateStatsGlyphColor();
     }
 
     private void UpdatePinGlyphColor()
@@ -163,6 +165,15 @@ public partial class PopupWindow : Window
         if (PinButton.Template.FindName("Glyph", PinButton) is not TextBlock glyph) return;
         glyph.Foreground = PinButton.IsChecked == true ? _textPrimary : _textSecondary;
         glyph.Opacity = PinButton.IsChecked == true ? 1.0 : 0.45;
+    }
+
+    private void UpdateStatsGlyphColor()
+    {
+        StatsButton.ApplyTemplate();
+        if (StatsButton.Template.FindName("StatsBar1", StatsButton) is not Rectangle bar1) return;
+        if (StatsButton.Template.FindName("StatsBar2", StatsButton) is not Rectangle bar2) return;
+        if (StatsButton.Template.FindName("StatsBar3", StatsButton) is not Rectangle bar3) return;
+        bar1.Fill = bar2.Fill = bar3.Fill = _textSecondary;
     }
 
     /// <summary>Whether the panel should stay open regardless of cursor position — see TrayOrchestrator's away-hide poll.</summary>

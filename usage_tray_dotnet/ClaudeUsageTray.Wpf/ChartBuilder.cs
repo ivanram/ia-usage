@@ -98,7 +98,76 @@ internal static class ChartBuilder
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
         });
 
+        AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush);
+
         return host;
+    }
+
+    /// <summary>
+    /// A Grid with no Background set only hit-tests its children's actual
+    /// drawn pixels — the empty space between/around the thin line
+    /// wouldn't register mouse moves at all without an explicit (if
+    /// invisible) Background. Only wired for the live Stats window; on the
+    /// Telegram image path nothing ever generates real mouse input, so
+    /// this is harmless dead weight there.
+    /// </summary>
+    private static void AddHoverReadout(Grid host, List<Point> screenPoints, IReadOnlyList<UsageHistoryPoint> points, double width, Brush lineBrush, Brush textBrush)
+    {
+        host.Background = Brushes.Transparent;
+
+        var hoverDot = new Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            Fill = lineBrush,
+            Visibility = Visibility.Collapsed,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+        };
+        var hoverLabel = new TextBlock
+        {
+            FontSize = 11,
+            FontWeight = FontWeights.Medium,
+            Foreground = textBrush,
+            Visibility = Visibility.Collapsed,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+        };
+        host.Children.Add(hoverDot);
+        host.Children.Add(hoverLabel);
+
+        host.MouseMove += (s, e) =>
+        {
+            var pos = e.GetPosition(host);
+            var nearestIndex = 0;
+            var nearestDist = double.MaxValue;
+            for (var i = 0; i < screenPoints.Count; i++)
+            {
+                var dist = Math.Abs(screenPoints[i].X - pos.X);
+                if (dist < nearestDist)
+                {
+                    nearestDist = dist;
+                    nearestIndex = i;
+                }
+            }
+
+            var sp = screenPoints[nearestIndex];
+            var point = points[nearestIndex];
+
+            hoverDot.Margin = new Thickness(sp.X - hoverDot.Width / 2, sp.Y - hoverDot.Height / 2, 0, 0);
+            hoverDot.Visibility = Visibility.Visible;
+
+            hoverLabel.Text = $"{point.Percent}%";
+            hoverLabel.Margin = new Thickness(Math.Clamp(sp.X - 16, 0, width - 32), Math.Max(0, sp.Y - 18), 0, 0);
+            hoverLabel.Visibility = Visibility.Visible;
+        };
+        host.MouseLeave += (s, e) =>
+        {
+            hoverDot.Visibility = Visibility.Collapsed;
+            hoverLabel.Visibility = Visibility.Collapsed;
+        };
     }
 
     /// <summary>

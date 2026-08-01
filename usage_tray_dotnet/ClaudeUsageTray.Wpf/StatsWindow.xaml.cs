@@ -34,7 +34,13 @@ public partial class StatsWindow : Window
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
-        DwmHelper.EnableRoundedCorners(hwnd);
+        // Deliberately NOT calling DwmHelper.EnableRoundedCorners here —
+        // this window (like PopupWindow/ToastWindow/AppDialogWindow) draws
+        // its own rounded card inside an AllowsTransparency Margin, and
+        // asking DWM to ALSO round the actual (invisible, rectangular) HWND
+        // is what produced the stray ghost border around the card. Only
+        // SettingsWindow uses EnableRoundedCorners, because it's a real
+        // opaque window without this transparent-margin trick.
         DwmHelper.SetWindowIcon(hwnd, _smallTaskbarIcon.Handle, _bigTaskbarIcon.Handle);
         var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
         DwmHelper.SetTitleBarDarkMode(hwnd, isDark);
