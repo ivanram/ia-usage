@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -48,7 +49,24 @@ public partial class ToastWindow : Window
             Foreground = textBrush,
         });
 
-        Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        // Measure()'d DesiredSize before the window has ever been shown was
+        // unreliable specifically for a Window (not a plain UIElement) very
+        // early in the process's life — the very first toast a fresh launch
+        // shows (the "already at 100%" case) consistently measured as 0x0,
+        // so it opened, fully "visible", at a computed position entirely
+        // off the corner of the screen. SizeToContent already sizes the
+        // window correctly through WPF's own layout pass — Loaded is where
+        // ActualWidth/ActualHeight are guaranteed to reflect that. Parked
+        // off-screen until then so there's no visible jump once positioned.
+        Left = -10000;
+        Top = -10000;
+        Loaded += OnLoadedPositionAndArm;
+        Show();
+    }
+
+    private void OnLoadedPositionAndArm(object sender, RoutedEventArgs e)
+    {
+        Loaded -= OnLoadedPositionAndArm;
 
         var cursor = NativeScreenHelper.GetCursorPosition();
         var screen = NativeScreenHelper.GetWorkAreaForPoint(cursor);
@@ -56,12 +74,18 @@ public partial class ToastWindow : Window
         var screenRightDip = screen.Right / dpi.DpiScaleX;
         var screenBottomDip = screen.Bottom / dpi.DpiScaleY;
 
-        var stackOffset = _openCount * (DesiredSize.Height + 10);
-        Left = screenRightDip - DesiredSize.Width - 12;
-        Top = screenBottomDip - DesiredSize.Height - 12 - stackOffset;
+        var stackOffset = _openCount * (ActualHeight + 10);
+        Left = screenRightDip - ActualWidth - 12;
+        Top = screenBottomDip - ActualHeight - 12 - stackOffset;
+
+        try
+        {
+            File.AppendAllText(Path.Combine(Paths.LogsDir, "notify_debug.txt"),
+                $"{DateTime.Now:O} Toast positioned: ActualWidth={ActualWidth} ActualHeight={ActualHeight} Left={Left} Top={Top} screenRightDip={screenRightDip} screenBottomDip={screenBottomDip}\n");
+        }
+        catch { /* best effort */ }
 
         _openCount++;
-        Show();
 
         if (NativeScreenHelper.GetIdleSeconds() >= IdleThresholdSeconds)
         {
