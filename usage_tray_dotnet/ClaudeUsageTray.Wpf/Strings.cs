@@ -84,6 +84,11 @@ internal static class Strings
         ["popup.tooltip.refresh"] = "Actualizar",
         ["popup.tooltip.settings"] = "Ajustes",
 
+        ["stats.title"] = "Estadísticas",
+        ["stats.subtitle"] = "Últimas horas",
+        ["stats.empty"] = "Aún no hay suficientes datos. Vuelve más tarde para ver la evolución de tu uso.",
+        ["stats.noservices"] = "No hay servicios activos.",
+
         ["tray.tooltip.starting"] = "{0}: iniciando...",
         ["tray.tooltip.noservices"] = "{0}: no hay servicios activos (clic derecho → Ajustes)",
         ["menu.refresh"] = "Actualizar ahora",
@@ -187,6 +192,11 @@ internal static class Strings
         ["popup.resets"] = "Resets {0}",
         ["popup.tooltip.refresh"] = "Refresh",
         ["popup.tooltip.settings"] = "Settings",
+
+        ["stats.title"] = "Statistics",
+        ["stats.subtitle"] = "Last few hours",
+        ["stats.empty"] = "Not enough data yet. Check back later to see how your usage has been trending.",
+        ["stats.noservices"] = "No active services.",
 
         ["tray.tooltip.starting"] = "{0}: starting...",
         ["tray.tooltip.noservices"] = "{0}: no active services (right-click → Settings)",

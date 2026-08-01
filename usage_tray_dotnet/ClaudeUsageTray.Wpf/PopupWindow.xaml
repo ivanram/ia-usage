@@ -26,6 +26,25 @@
             <Grid>
                 <StackPanel x:Name="ContentHost" Margin="20" />
 
+                <Button x:Name="StatsButton" Width="26" Height="26"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,8,40,0" Cursor="Hand"
+                        Click="OnStatsClick" ToolTip="Estadísticas">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="StatsBg" CornerRadius="13" Background="Transparent">
+                                <TextBlock Text="&#128202;" FontSize="12"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="StatsBg" Property="Background" Value="#14808080" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <!--
                 Pinning stops the away-hide timer (see TrayOrchestrator) from
                 closing the panel, so it can be left open/moved around

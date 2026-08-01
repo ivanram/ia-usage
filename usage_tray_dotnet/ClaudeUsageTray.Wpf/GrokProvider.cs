@@ -82,7 +82,7 @@ public sealed class GrokProvider : IUsageProvider
         {
             ServiceName = Name,
             Ok = true,
-            Bars = new List<UsageBar> { new() { Label = Strings.T("provider.grok.usage"), Percent = percent, ResetAt = resetAt } },
+            Bars = new List<UsageBar> { new() { Label = Strings.T("provider.grok.usage"), Percent = percent, ResetAt = resetAt, IsPrimary = true } },
         };
     }
 }

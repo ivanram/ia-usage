@@ -40,12 +40,16 @@ public sealed class TrayOrchestrator : IDisposable
     private bool _hoverTriggered;
     private readonly PopupWindow _popup = new();
     private readonly TelegramBotService _telegram;
+    private readonly UsageHistoryStore _historyStore = new();
+    private StatsWindow? _statsWindow;
     private AppSettings _settings = AppSettings.Load();
 
     public TrayOrchestrator()
     {
-        _telegram = new TelegramBotService(() => _providers.Where(IsEnabled)
-            .Select(p => _lastSnapshots.TryGetValue(p.Name, out var s) ? s : new UsageSnapshot { ServiceName = p.Name, Ok = false, ErrorMessage = Strings.T("loading") }));
+        _telegram = new TelegramBotService(
+            () => _providers.Where(IsEnabled)
+                .Select(p => _lastSnapshots.TryGetValue(p.Name, out var s) ? s : new UsageSnapshot { ServiceName = p.Name, Ok = false, ErrorMessage = Strings.T("loading") }),
+            _historyStore);
     }
 
     public void Start()
@@ -78,6 +82,7 @@ public sealed class TrayOrchestrator : IDisposable
 
         _popup.RefreshRequested += async (s, e) => await RefreshAllAsync();
         _popup.SettingsRequested += (s, e) => { _popup.Hide(); OpenSettings(); };
+        _popup.StatsRequested += (s, e) => OpenStats();
 
         ApplyTelegramSettings();
         ApplyRefreshInterval();
@@ -346,6 +351,26 @@ public sealed class TrayOrchestrator : IDisposable
         PopulateContextMenu();
     }
 
+    /// <summary>
+    /// Unlike Settings, this isn't modal and stays open on its own — a
+    /// second click just brings the existing window forward instead of
+    /// opening a duplicate, same pattern as _openSettingsWindow.
+    /// </summary>
+    private void OpenStats()
+    {
+        _popup.Hide();
+
+        if (_statsWindow is not null)
+        {
+            _statsWindow.Activate();
+            return;
+        }
+
+        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore);
+        _statsWindow.Closed += (s, e) => _statsWindow = null;
+        _statsWindow.Show();
+    }
+
     private void ApplyTheme()
     {
         ThemeHelper.Apply(_settings.Theme);
@@ -491,7 +516,12 @@ public sealed class TrayOrchestrator : IDisposable
                 var (host, snap) = await finishedTask;
 
                 Log($"[{provider.Name}] fetch result Ok={snap.Ok} Error={snap.ErrorMessage}");
-                if (snap.Ok) CheckForReset(provider.Name, snap);
+                if (snap.Ok)
+                {
+                    CheckForReset(provider.Name, snap);
+                    var primaryBar = snap.Bars.FirstOrDefault(b => b.IsPrimary);
+                    if (primaryBar is not null) _historyStore.Record(provider.Name, primaryBar.Percent);
+                }
                 _lastSnapshots[provider.Name] = snap;
 
                 if (!snap.Ok && !host.IsVisible && provider.SupportsLogin)

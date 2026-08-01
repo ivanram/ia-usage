@@ -114,9 +114,9 @@ public partial class SettingsWindow : Window
     private void BuildCards()
     {
         AddCard(GlyphIcon(IconGear), Strings.T("card.general"), BuildGeneralCard);
-        AddCard(GlyphIcon(IconRefresh), Strings.T("card.update"), BuildUpdateCard);
-        AddCard(GlyphIcon(IconClock), Strings.T("card.popup"), BuildPopupModeCard);
         AddCard(GlyphIcon(IconPalette), Strings.T("card.appearance"), BuildAppearanceCard);
+        AddCard(GlyphIcon(IconClock), Strings.T("card.popup"), BuildPopupModeCard);
+        AddCard(GlyphIcon(IconRefresh), Strings.T("card.update"), BuildUpdateCard);
         AddCard(AiBadgeIcon(), Strings.T("card.services"), BuildServicesCard);
         AddCard(new Image { Source = ServiceIcons.TelegramIcon, Width = 16, Height = 16 }, Strings.T("card.telegram"), BuildTelegramCard);
     }

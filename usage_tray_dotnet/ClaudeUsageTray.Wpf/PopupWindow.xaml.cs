@@ -16,6 +16,7 @@ public partial class PopupWindow : Window
 
     public event EventHandler? RefreshRequested;
     public event EventHandler? SettingsRequested;
+    public event EventHandler? StatsRequested;
 
     private readonly List<(Border Fill, double TargetWidth)> _animatedBars = new();
     /// <summary>
@@ -168,6 +169,8 @@ public partial class PopupWindow : Window
     public bool IsPinned => PinButton.IsChecked == true;
 
     private void OnPinToggled(object sender, RoutedEventArgs e) => UpdatePinGlyphColor();
+
+    private void OnStatsClick(object sender, RoutedEventArgs e) => StatsRequested?.Invoke(this, EventArgs.Empty);
 
     /// <summary>
     /// WindowStyle="None" means there's no native title bar to drag by, so

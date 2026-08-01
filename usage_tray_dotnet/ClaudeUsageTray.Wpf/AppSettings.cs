@@ -35,9 +35,9 @@ public sealed class AppSettings
 
     public const string OriginalAccentSentinel = "ORIGINAL";
 
-    public bool NotifyResetClaude { get; set; }
-    public bool NotifyResetChatGpt { get; set; }
-    public bool NotifyResetGrok { get; set; }
+    public bool NotifyResetClaude { get; set; } = true;
+    public bool NotifyResetChatGpt { get; set; } = true;
+    public bool NotifyResetGrok { get; set; } = true;
     public bool NotifySoundEnabled { get; set; }
 
     public AppLanguage Language { get; set; } = AppLanguage.Spanish;
