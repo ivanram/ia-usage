@@ -15,6 +15,17 @@ public partial class App : Application
     // this app; it isn't a secret.
     private static Mutex? _singleInstanceMutex;
 
+    // A named kernel event a manual dev/deploy step can Set() from outside
+    // the process to ask this exact running instance to shut down cleanly —
+    // same OnExit/Dispose path as the tray menu's "Salir", so WebView2 gets
+    // to flush its cookie stores properly instead of losing a session to a
+    // hard kill. Not part of the GitHub-Releases auto-update flow (that one
+    // already replaces itself via TryHandleApplyUpdate) — this is purely
+    // for installing a freshly-built exe onto this machine without the user
+    // having to close/reopen the app by hand each time.
+    private const string ExitSignalName = "ClaudeUsageTray-ExitSignal-8f3b6b3a-9e0e-4b7a-9c2f-2b7b6e6b6a1a";
+    private EventWaitHandle? _exitSignal;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -35,6 +46,14 @@ public partial class App : Application
             Shutdown();
             return;
         }
+
+        _exitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ExitSignalName);
+        var dispatcher = Dispatcher;
+        new Thread(() =>
+        {
+            _exitSignal.WaitOne();
+            dispatcher.Invoke(Shutdown);
+        }) { IsBackground = true, Name = "ExitSignalWatcher" }.Start();
 
         DispatcherUnhandledException += (s, ex) =>
         {

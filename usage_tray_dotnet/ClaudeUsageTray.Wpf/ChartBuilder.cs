@@ -203,6 +203,25 @@ internal static class ChartBuilder
         return container;
     }
 
+    /// <summary>
+    /// Same green/amber/red-by-percent gradient the popup panel's own bars
+    /// use — shared so the Telegram usage image looks like the same app,
+    /// not a reinvented palette.
+    /// </summary>
+    public static Brush GradientForPercent(int percent)
+    {
+        var (from, to) = percent switch
+        {
+            < 60 => ("#72D08F", "#3F9E63"),
+            < 85 => ("#F3C36A", "#D99420"),
+            _ => ("#EE8484", "#CE3D3D"),
+        };
+        return new LinearGradientBrush(
+            (Color)ColorConverter.ConvertFromString(from),
+            (Color)ColorConverter.ConvertFromString(to),
+            new Point(0, 0), new Point(1, 0));
+    }
+
     /// <summary>Catmull-Rom spline through the points, converted to cubic Bezier segments — smooth without overshooting past 0/100%.</summary>
     private static PathGeometry BuildSmoothPath(List<Point> points)
     {

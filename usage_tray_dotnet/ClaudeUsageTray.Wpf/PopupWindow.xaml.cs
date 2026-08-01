@@ -307,7 +307,7 @@ public partial class PopupWindow : Window
             CornerRadius = new CornerRadius(height / 2),
             HorizontalAlignment = HorizontalAlignment.Left,
             Width = 0,
-            Background = FlatBarColorHex is { } flatHex ? FlatGradient(flatHex) : GradientForPercent(percent),
+            Background = FlatBarColorHex is { } flatHex ? FlatGradient(flatHex) : ChartBuilder.GradientForPercent(percent),
         };
 
         grid.Children.Add(track);
@@ -423,20 +423,6 @@ public partial class PopupWindow : Window
         button.SetResourceReference(StyleProperty, "MaterialDesignFlatButton");
         button.Click += (s, e) => onClick();
         return (button, icon);
-    }
-
-    private static Brush GradientForPercent(int percent)
-    {
-        var (from, to) = percent switch
-        {
-            < 60 => ("#72D08F", "#3F9E63"),
-            < 85 => ("#F3C36A", "#D99420"),
-            _ => ("#EE8484", "#CE3D3D"),
-        };
-        return new LinearGradientBrush(
-            (Color)ColorConverter.ConvertFromString(from),
-            (Color)ColorConverter.ConvertFromString(to),
-            new Point(0, 0), new Point(1, 0));
     }
 
     /// <summary>Same lighter-to-base gradient treatment as the percent-based bars, but built from a single chosen accent color instead.</summary>

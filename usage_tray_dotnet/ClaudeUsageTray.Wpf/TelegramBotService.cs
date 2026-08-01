@@ -80,7 +80,19 @@ public sealed class TelegramBotService
 
                 if (normalized == "/uso" || normalized.StartsWith("/uso@") || normalized == UsageButtonText)
                 {
-                    await bot.SendMessage(chatId, BuildReply(_getSnapshots()), parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
+                    var snapshots = _getSnapshots().ToList();
+                    var image = BuildUsageImage(snapshots);
+                    if (image is null)
+                    {
+                        await bot.SendMessage(chatId, BuildReply(snapshots), parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
+                    }
+                    else
+                    {
+                        using var stream = new MemoryStream(image);
+                        await bot.SendPhoto(chatId, InputFile.FromStream(stream, "uso.png"),
+                            caption: BuildReply(snapshots), parseMode: ParseMode.Markdown,
+                            replyMarkup: Keyboard, cancellationToken: innerCt);
+                    }
                     return;
                 }
 
@@ -162,6 +174,96 @@ public sealed class TelegramBotService
             root.UpdateLayout();
 
             var rtb = new RenderTargetBitmap((int)StatsImageWidth, (int)Math.Ceiling(height), 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(root);
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(rtb));
+            using var ms = new MemoryStream();
+            encoder.Save(ms);
+            return ms.ToArray();
+        });
+    }
+
+    /// <summary>
+    /// Renders each service's real app icon (the same ServiceIcons used
+    /// everywhere else) plus its bars as a PNG, instead of the plain-text
+    /// reply's flat colored circle standing in for a service — Telegram
+    /// text messages can't embed arbitrary custom icons inline, only
+    /// Unicode emoji, so an actual rendered image is the only way to show
+    /// the real Claude/ChatGPT/Grok marks here. Skips services that
+    /// errored (no bars to draw) — the text caption still covers those.
+    /// </summary>
+    private byte[]? BuildUsageImage(List<UsageSnapshot> snapshots)
+    {
+        var okSnapshots = snapshots.Where(s => s.Ok && s.Bars.Count > 0).ToList();
+        if (okSnapshots.Count == 0) return null;
+
+        return Application.Current.Dispatcher.Invoke(() =>
+        {
+            const double imageWidth = 420;
+            var textPrimary = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF2, 0xF2, 0xF2));
+            var textSecondary = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xAD, 0xAD, 0xAD));
+            var background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x1E, 0x22));
+            var trackBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3A, 0x3A, 0x3E));
+
+            var content = new StackPanel();
+            content.Children.Add(new TextBlock
+            {
+                Text = $"🤖 {Strings.T("app.name")}",
+                FontSize = 19,
+                FontWeight = FontWeights.Bold,
+                Foreground = textPrimary,
+                Margin = new Thickness(0, 0, 0, 18),
+            });
+
+            var barAreaWidth = imageWidth - 48;
+            for (var i = 0; i < okSnapshots.Count; i++)
+            {
+                var snap = okSnapshots[i];
+                var block = new StackPanel { Margin = new Thickness(0, 0, 0, i == okSnapshots.Count - 1 ? 0 : 18) };
+
+                var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+                var icon = ServiceIcons.Build(snap.ServiceName, 18, textPrimary);
+                icon.Margin = new Thickness(0, 0, 8, 0);
+                icon.VerticalAlignment = VerticalAlignment.Center;
+                header.Children.Add(icon);
+                header.Children.Add(new TextBlock { Text = snap.ServiceName, FontSize = 15, FontWeight = FontWeights.Medium, Foreground = textPrimary, VerticalAlignment = VerticalAlignment.Center });
+                block.Children.Add(header);
+
+                foreach (var bar in snap.Bars)
+                {
+                    var labelRow = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+                    labelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    labelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    var label = new TextBlock { Text = bar.Label, FontSize = 12, Foreground = textSecondary };
+                    var pct = new TextBlock { Text = $"{bar.Percent}%", FontSize = 12, FontWeight = FontWeights.Medium, Foreground = textPrimary };
+                    Grid.SetColumn(pct, 1);
+                    labelRow.Children.Add(label);
+                    labelRow.Children.Add(pct);
+                    block.Children.Add(labelRow);
+
+                    var barGrid = new Grid { Height = 8, Margin = new Thickness(0, 0, 0, 14) };
+                    barGrid.Children.Add(new Border { CornerRadius = new CornerRadius(4), Background = trackBrush });
+                    barGrid.Children.Add(new Border
+                    {
+                        CornerRadius = new CornerRadius(4),
+                        Background = ChartBuilder.GradientForPercent(bar.Percent),
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        Width = Math.Clamp(bar.Percent, 0, 100) / 100.0 * barAreaWidth,
+                    });
+                    block.Children.Add(barGrid);
+                }
+
+                content.Children.Add(block);
+            }
+
+            var root = new Border { Background = background, Padding = new Thickness(24), Child = content };
+            root.Measure(new Size(imageWidth, double.PositiveInfinity));
+            var height = root.DesiredSize.Height;
+            root.Arrange(new Rect(0, 0, imageWidth, height));
+            root.UpdateLayout();
+
+            var rtb = new RenderTargetBitmap((int)imageWidth, (int)Math.Ceiling(height), 96, 96, PixelFormats.Pbgra32);
             rtb.Render(root);
 
             var encoder = new PngBitmapEncoder();
