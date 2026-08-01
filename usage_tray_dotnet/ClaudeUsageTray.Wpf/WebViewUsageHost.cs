@@ -53,7 +53,23 @@ public sealed class WebViewUsageHost : Window
     }
 
     private static readonly string DebugFile = Path.Combine(Paths.LogsDir, "webview_debug.txt");
-    private static void Log(string msg) => File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n");
+    private static readonly object LogLock = new();
+
+    // Every provider gets its own WebViewUsageHost, but they're all fetched
+    // in parallel now and all log to this one shared file — two instances'
+    // File.AppendAllText calls landing at the same instant throws
+    // IOException ("being used by another process"), which, uncaught,
+    // silently aborted whatever async chain was mid-call. Locked and
+    // best-effort so a logging call can never be the thing that breaks a
+    // refresh.
+    private static void Log(string msg)
+    {
+        lock (LogLock)
+        {
+            try { File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n"); }
+            catch { /* best effort */ }
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -135,22 +151,21 @@ public sealed class WebViewUsageHost : Window
     /// </summary>
     public async Task<string?> RunScriptForResultAsync(string kickoffScript, string resultExpression, int timeoutMs = 9000)
     {
-        var debugFile = Path.Combine(Paths.LogsDir, "webview_debug.txt");
         if (!IsReady)
         {
-            File.AppendAllText(debugFile, $"{DateTime.Now:O} [{Title}] IsReady=false, bailing out\n");
+            Log($"[{Title}] IsReady=false, bailing out");
             return null;
         }
 
         var kickoffResult = await WebView.CoreWebView2.ExecuteScriptAsync(kickoffScript);
-        File.AppendAllText(debugFile, $"{DateTime.Now:O} [{Title}] kickoff executed, raw return={kickoffResult}\n");
+        Log($"[{Title}] kickoff executed, raw return={kickoffResult}");
 
         var attempts = timeoutMs / 300;
         for (var i = 0; i < attempts; i++)
         {
             await Task.Delay(300);
             var raw = await WebView.CoreWebView2.ExecuteScriptAsync(resultExpression);
-            if (i % 5 == 0) File.AppendAllText(debugFile, $"{DateTime.Now:O} [{Title}] attempt {i}: raw={raw}\n");
+            if (i % 5 == 0) Log($"[{Title}] attempt {i}: raw={raw}");
             if (raw != "null")
             {
                 return System.Text.Json.JsonSerializer.Deserialize<string>(raw);

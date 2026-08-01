@@ -33,6 +33,7 @@ public sealed class TrayOrchestrator : IDisposable
     private DateTime? _lastUpdated;
 
     private TaskbarIcon _trayIcon = null!;
+    private readonly ContextMenu _contextMenu = new();
     private readonly DispatcherTimer _refreshTimer = new();
     private readonly DispatcherTimer _hoverTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private int _hoverMs;
@@ -52,12 +53,14 @@ public sealed class TrayOrchestrator : IDisposable
         Strings.Current = _settings.Language;
         ApplyTheme();
 
+        PopulateContextMenu();
+
         _trayIcon = new TaskbarIcon
         {
             Id = TrayIconGuid,
             Icon = IconFactory.BuildRobotIcon(),
             ToolTipText = _settings.PopupMode == PopupMode.Rich ? Strings.T("app.name") : Strings.F("tray.tooltip.starting", Strings.T("app.name")),
-            ContextMenu = BuildContextMenu(),
+            ContextMenu = _contextMenu,
         };
         _trayIcon.TrayLeftMouseUp += (s, e) => OnTrayLeftClick();
         _trayIcon.TrayMouseDoubleClick += (s, e) => OpenSettings();
@@ -229,61 +232,68 @@ public sealed class TrayOrchestrator : IDisposable
     /// dark/light theme (it's always the stock Windows menu look), which
     /// reads as visually disconnected from the rest of the UI — this pins
     /// its colors to the same MaterialDesign resources everything else
-    /// uses, so it actually follows Ajustes → Apariencia.
+    /// uses, so it actually follows Ajustes → Apariencia. Padding/height are
+    /// set directly per item rather than through ItemContainerStyle — a
+    /// shared Style object assigned there was the suspected cause of the
+    /// tray icon's right-click crash (H.NotifyIcon.Wpf hosts this menu
+    /// through its own native popup plumbing, which apparently doesn't get
+    /// along with a reused ItemContainerStyle); setting properties directly
+    /// on each MenuItem gets the same look without touching it.
     /// </summary>
-    private static void ApplyMenuTheme(ContextMenu menu)
+    private static void StyleMenuItem(MenuItem item)
     {
-        menu.SetResourceReference(Control.BackgroundProperty, "MaterialDesignPaper");
-        menu.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
-        menu.BorderThickness = new Thickness(1);
-        menu.SetResourceReference(Control.BorderBrushProperty, "MaterialDesignDivider");
-
-        var itemStyle = new Style(typeof(MenuItem));
-        itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 7, 14, 7)));
-        itemStyle.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 32.0));
-        menu.ItemContainerStyle = itemStyle;
-
-        foreach (var item in menu.Items.OfType<MenuItem>())
-        {
-            item.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
-            item.Style = itemStyle;
-            foreach (var sub in item.Items.OfType<MenuItem>())
-            {
-                sub.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
-                sub.Style = itemStyle;
-            }
-        }
+        item.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
+        item.Padding = new Thickness(10, 7, 14, 7);
+        item.MinHeight = 32;
     }
 
-    private ContextMenu BuildContextMenu()
+    /// <summary>
+    /// Fills _contextMenu in place — never replaces the ContextMenu object
+    /// itself. H.NotifyIcon.Wpf's TaskbarIcon.ForceCreate binds native
+    /// tray-icon plumbing to the exact ContextMenu instance handed to it at
+    /// construction; swapping in a brand new one afterward (which the
+    /// language-preview code used to do on every Settings save/cancel) left
+    /// that plumbing pointing at a stale object and crashed the whole app
+    /// the next time the icon was right-clicked. Called once at startup and
+    /// again — via PreviewLanguage, clearing Items first — whenever the
+    /// language changes live.
+    /// </summary>
+    private void PopulateContextMenu()
     {
-        var menu = new ContextMenu();
+        _contextMenu.Items.Clear();
 
         var refreshItem = new MenuItem { Header = Strings.T("menu.refresh"), Icon = MenuGlyph(MenuIconRefresh) };
         refreshItem.Click += async (s, e) => await RefreshAllAsync();
-        menu.Items.Add(refreshItem);
+        StyleMenuItem(refreshItem);
+        _contextMenu.Items.Add(refreshItem);
 
         var settingsItem = new MenuItem { Header = Strings.T("menu.settings"), Icon = MenuGlyph(MenuIconSettings) };
         settingsItem.Click += (s, e) => OpenSettings();
-        menu.Items.Add(settingsItem);
+        StyleMenuItem(settingsItem);
+        _contextMenu.Items.Add(settingsItem);
 
         var loginMenu = new MenuItem { Header = Strings.T("menu.login"), Icon = MenuGlyph(MenuIconLogin) };
+        StyleMenuItem(loginMenu);
         foreach (var provider in _providers.Where(p => p.SupportsLogin))
         {
             var item = new MenuItem { Header = provider.Name };
             item.Click += async (s, e) => await LoginAsync(provider);
+            StyleMenuItem(item);
             loginMenu.Items.Add(item);
         }
-        menu.Items.Add(loginMenu);
+        _contextMenu.Items.Add(loginMenu);
 
-        menu.Items.Add(new Separator());
+        _contextMenu.Items.Add(new Separator());
 
         var exitItem = new MenuItem { Header = Strings.T("menu.exit"), Icon = MenuGlyph(MenuIconExit) };
         exitItem.Click += (s, e) => ExitApp();
-        menu.Items.Add(exitItem);
+        StyleMenuItem(exitItem);
+        _contextMenu.Items.Add(exitItem);
 
-        ApplyMenuTheme(menu);
-        return menu;
+        _contextMenu.SetResourceReference(Control.BackgroundProperty, "MaterialDesignPaper");
+        _contextMenu.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
+        _contextMenu.BorderThickness = new Thickness(1);
+        _contextMenu.SetResourceReference(Control.BorderBrushProperty, "MaterialDesignDivider");
     }
 
     private SettingsWindow? _openSettingsWindow;
@@ -333,7 +343,7 @@ public sealed class TrayOrchestrator : IDisposable
     private void PreviewLanguage(AppLanguage language)
     {
         Strings.Current = language;
-        _trayIcon.ContextMenu = BuildContextMenu();
+        PopulateContextMenu();
     }
 
     private void ApplyTheme()
@@ -367,7 +377,24 @@ public sealed class TrayOrchestrator : IDisposable
     }
 
     private static readonly string DebugFile = Path.Combine(Paths.LogsDir, "orchestrator_debug.txt");
-    private static void Log(string msg) => File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n");
+    private static readonly object LogLock = new();
+
+    // Providers are now fetched in parallel (see RefreshAllAsync), which
+    // means their Log() calls can genuinely land at the same instant —
+    // File.AppendAllText opening the same file from two places at once
+    // throws IOException, which (uncaught, inside RefreshAllAsync's loop)
+    // silently killed the rest of that refresh cycle, including whatever
+    // CheckForReset call would've fired the exhausted-limit toast for a
+    // provider later in the batch. Locked and best-effort now, same as
+    // every other debug logger in this app.
+    private static void Log(string msg)
+    {
+        lock (LogLock)
+        {
+            try { File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n"); }
+            catch { /* best effort */ }
+        }
+    }
 
     private Task<WebViewUsageHost> EnsureHostAsync(IUsageProvider provider)
     {

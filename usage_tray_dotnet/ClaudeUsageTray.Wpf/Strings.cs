@@ -121,6 +121,7 @@ internal static class Strings
         ["provider.grok.loginneeded"] = "Inicia sesión en la ventana de Grok",
         ["provider.chatgpt.credits"] = "Saldo de créditos: {0}",
         ["provider.claude.credits.used"] = "Créditos usados: {0:0.00} {1}",
+        ["provider.claude.credits.used_of"] = "Créditos usados: {0:0.00} / {1:0.00} {2}",
 
         ["telegrambot.prompt"] = "Pulsa el botón o escribe /uso para ver tu consumo.",
         ["telegrambot.none"] = "No hay servicios activos todavía.",
@@ -224,6 +225,7 @@ internal static class Strings
         ["provider.grok.loginneeded"] = "Sign in from the Grok window",
         ["provider.chatgpt.credits"] = "Credit balance: {0}",
         ["provider.claude.credits.used"] = "Credits used: {0:0.00} {1}",
+        ["provider.claude.credits.used_of"] = "Credits used: {0:0.00} / {1:0.00} {2}",
 
         ["telegrambot.prompt"] = "Tap the button or send /uso to check your usage.",
         ["telegrambot.none"] = "No active services yet.",

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 
 namespace ClaudeUsageTray;
@@ -8,6 +9,8 @@ public sealed class ClaudeProvider : IUsageProvider
     public string HomeUrl => "https://claude.ai/settings/usage";
     public string LoginUrl => "https://claude.ai/login";
     public string ProfileFolderName => "WebView2_Claude";
+
+    private static readonly string CreditsDebugFile = Path.Combine(Paths.LogsDir, "credits_debug.txt");
 
     private const string KickoffScript = """
         window.__claudeUsageResult = null;
@@ -22,7 +25,13 @@ public sealed class ClaudeProvider : IUsageProvider
             if (!usageResp.ok) { window.__claudeUsageResult = JSON.stringify({error:'usage_http_' + usageResp.status}); return; }
             const usage = await usageResp.json();
 
-            window.__claudeUsageResult = JSON.stringify({ok:true, usage});
+            let credits = null;
+            try {
+              const creditsResp = await fetch(`https://claude.ai/api/organizations/${org}/prepaid/credits`, {credentials:'include'});
+              if (creditsResp.ok) credits = await creditsResp.json();
+            } catch (e) { /* optional: the "usado / saldo actual" line just won't show */ }
+
+            window.__claudeUsageResult = JSON.stringify({ok:true, usage, credits});
           } catch (e) {
             window.__claudeUsageResult = JSON.stringify({error:String(e)});
           }
@@ -64,15 +73,13 @@ public sealed class ClaudeProvider : IUsageProvider
             weeklyReset = DateTimeOffset.Parse(resetsAt.GetString()!).ToLocalTime();
         }
 
-        // The prepaid/credits endpoint's tranches only carry each grant's
-        // original granted_amount_minor_units, not what's left of it — an
-        // account with promo credits expiring/renewing over time can have
-        // tranches summing to far more than the actual current balance
-        // (confirmed: a user's tranches summed to 85 EUR granted-to-date
-        // while claude.ai's own "Saldo actual" showed 39.16 EUR). Rather
-        // than guess at a "remaining" field name that might not exist,
-        // this only reports the one number the API gives us that's
-        // unambiguous: credits actually spent.
+        // credits_debug.txt logs the raw prepaid/credits payload every fetch
+        // — the previous attempt at this line summed each tranche's
+        // granted_amount_minor_units (lifetime granted) instead of what's
+        // left of it, showing e.g. "4.42 / 85.00" when the real remaining
+        // balance was 39.16. This tries each tranche's own remaining/balance
+        // field instead; if that field turns out not to exist either, the
+        // log is there to find the right one without more guessing.
         string? creditsLine = null;
         if (usage.TryGetProperty("extra_usage", out var extra) && extra.ValueKind == JsonValueKind.Object
             && extra.TryGetProperty("used_credits", out var usedCredits) && usedCredits.ValueKind == JsonValueKind.Number)
@@ -80,8 +87,19 @@ public sealed class ClaudeProvider : IUsageProvider
             var decimals = extra.TryGetProperty("decimal_places", out var dp) ? dp.GetInt32() : 2;
             var currency = extra.TryGetProperty("currency", out var cur) ? cur.GetString() ?? "" : "";
             var used = usedCredits.GetDecimal() / (decimal)Math.Pow(10, decimals);
+            var divisor = (decimal)Math.Pow(10, decimals);
 
-            creditsLine = Strings.F("provider.claude.credits.used", used, currency);
+            decimal? balance = null;
+            if (root.TryGetProperty("credits", out var credits) && credits.ValueKind == JsonValueKind.Object)
+            {
+                LogCredits(credits);
+                var remaining = SumRemainingMinorUnits(credits, "tranches") + SumRemainingMinorUnits(credits, "promo_tranches");
+                if (remaining > 0) balance = remaining / divisor;
+            }
+
+            creditsLine = balance is null
+                ? Strings.F("provider.claude.credits.used", used, currency)
+                : Strings.F("provider.claude.credits.used_of", used, balance, currency);
         }
 
         return new UsageSnapshot
@@ -95,5 +113,44 @@ public sealed class ClaudeProvider : IUsageProvider
             },
             ExtraLine = creditsLine,
         };
+    }
+
+    /// <summary>
+    /// Tries a few plausible field names for "what's left of this tranche"
+    /// rather than "granted_amount_minor_units" (what it started with) —
+    /// returns 0, not a wrong number, if none of them are present, so an
+    /// unrecognized shape just falls back to used-only instead of showing
+    /// something misleading.
+    /// </summary>
+    private static decimal SumRemainingMinorUnits(JsonElement credits, string arrayName)
+    {
+        if (!credits.TryGetProperty(arrayName, out var arr) || arr.ValueKind != JsonValueKind.Array) return 0;
+        decimal sum = 0;
+        foreach (var item in arr.EnumerateArray())
+        {
+            if (TryGetNumber(item, "remaining_amount_minor_units", out var remaining)
+                || TryGetNumber(item, "balance_minor_units", out remaining)
+                || TryGetNumber(item, "available_amount_minor_units", out remaining))
+            {
+                sum += remaining;
+            }
+        }
+        return sum;
+    }
+
+    private static bool TryGetNumber(JsonElement obj, string propertyName, out decimal value)
+    {
+        if (obj.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.Number)
+        {
+            value = prop.GetDecimal();
+            return true;
+        }
+        value = 0;
+        return false;
+    }
+
+    private static void LogCredits(JsonElement credits)
+    {
+        try { File.AppendAllText(CreditsDebugFile, $"{DateTime.Now:O} {credits.GetRawText()}\n"); } catch { /* best effort */ }
     }
 }
