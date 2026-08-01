@@ -102,6 +102,7 @@ internal static class Strings
         ["dialog.update.title"] = "{0} — Actualización disponible",
         ["dialog.update.message"] = "Hay una nueva versión disponible (v{0}).\n¿Quieres actualizarla ahora?",
         ["dialog.checkfailed.message"] = "No se ha podido comprobar si hay actualizaciones.",
+        ["dialog.ratelimited.message"] = "GitHub está limitando temporalmente las comprobaciones de actualización. Inténtalo de nuevo dentro de un rato.",
         ["dialog.uptodate.message"] = "Ya tienes la última versión.",
 
         ["time.available"] = "ya disponible",
@@ -204,6 +205,7 @@ internal static class Strings
         ["dialog.update.title"] = "{0} — Update available",
         ["dialog.update.message"] = "A new version is available (v{0}).\nDo you want to update now?",
         ["dialog.checkfailed.message"] = "Couldn't check for updates.",
+        ["dialog.ratelimited.message"] = "GitHub is temporarily rate-limiting update checks. Try again in a little while.",
         ["dialog.uptodate.message"] = "You're already on the latest version.",
 
         ["time.available"] = "available now",

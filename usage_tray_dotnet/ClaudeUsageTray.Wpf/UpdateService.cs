@@ -136,10 +136,14 @@ internal static class UpdateService
                 if (settings.UpdateSnoozeUntil is { } snoozeUntil && DateTime.Now < snoozeUntil) return;
             }
 
-            var (version, downloadUrl) = await GetLatestReleaseAsync();
+            var (version, downloadUrl, rateLimited) = await GetLatestReleaseAsync();
             if (version is null || downloadUrl is null)
             {
-                if (manualCheck) AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T("dialog.checkfailed.message"));
+                if (manualCheck)
+                {
+                    var messageKey = rateLimited ? "dialog.ratelimited.message" : "dialog.checkfailed.message";
+                    AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T(messageKey));
+                }
                 return;
             }
 
@@ -186,7 +190,16 @@ internal static class UpdateService
         return latest.Build > current.Build;
     }
 
-    private static async Task<(Version? version, string? downloadUrl)> GetLatestReleaseAsync()
+    /// <summary>
+    /// GitHub's REST API caps unauthenticated requests at 60/hour per IP —
+    /// easy to hit during active development (repeated manual checks +
+    /// every build's startup check, all from the same machine) but very
+    /// unlikely in normal single-user usage (one silent check at startup
+    /// a day, plus the occasional manual click). Surfaced separately from
+    /// other failures so the dialog can say "try again shortly" instead of
+    /// a generic, slightly alarming "couldn't check for updates".
+    /// </summary>
+    private static async Task<(Version? version, string? downloadUrl, bool rateLimited)> GetLatestReleaseAsync()
     {
         using var http = new HttpClient();
         http.DefaultRequestHeaders.UserAgent.ParseAdd("ClaudeUsageTray-UpdateChecker");
@@ -194,14 +207,14 @@ internal static class UpdateService
         if (!resp.IsSuccessStatusCode)
         {
             Log($"GetLatestReleaseAsync: http {(int)resp.StatusCode}");
-            return (null, null);
+            return (null, null, resp.StatusCode == System.Net.HttpStatusCode.Forbidden);
         }
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStreamAsync());
         var root = doc.RootElement;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
         var versionText = tag.TrimStart('v', 'V');
-        if (!Version.TryParse(versionText, out var version)) return (null, null);
+        if (!Version.TryParse(versionText, out var version)) return (null, null, false);
 
         string? downloadUrl = null;
         if (root.TryGetProperty("assets", out var assets))
@@ -216,7 +229,7 @@ internal static class UpdateService
                 }
             }
         }
-        return (version, downloadUrl);
+        return (version, downloadUrl, false);
     }
 
     private static async Task DownloadAndApplyAsync(string downloadUrl, Version version)
