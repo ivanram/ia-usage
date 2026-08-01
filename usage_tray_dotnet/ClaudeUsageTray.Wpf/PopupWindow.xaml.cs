@@ -179,6 +179,9 @@ public partial class PopupWindow : Window
     /// <summary>Whether the panel should stay open regardless of cursor position — see TrayOrchestrator's away-hide poll.</summary>
     public bool IsPinned => PinButton.IsChecked == true;
 
+    /// <summary>Opening Stats pins the main panel too, so both stay up together — the user can still unpin by hand if they don't want that.</summary>
+    public void SetPinned(bool pinned) => PinButton.IsChecked = pinned;
+
     private void OnPinToggled(object sender, RoutedEventArgs e) => UpdatePinGlyphColor();
 
     private void OnStatsClick(object sender, RoutedEventArgs e) => StatsRequested?.Invoke(this, EventArgs.Empty);

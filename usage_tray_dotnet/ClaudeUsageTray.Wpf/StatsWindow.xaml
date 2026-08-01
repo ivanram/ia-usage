@@ -7,9 +7,8 @@
         Background="Transparent"
         ShowInTaskbar="True"
         ResizeMode="NoResize"
-        SizeToContent="WidthAndHeight"
+        SizeToContent="Manual"
         WindowStartupLocation="Manual"
-        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
         SourceInitialized="OnSourceInitialized">
     <Grid Margin="18">
         <Border x:Name="RootBorder" CornerRadius="16" MouseLeftButtonDown="OnRootMouseLeftButtonDown">
@@ -17,7 +16,7 @@
                 <DropShadowEffect BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black" />
             </Border.Effect>
             <Grid>
-                <StackPanel x:Name="ContentHost" Margin="20" Width="288" />
+                <StackPanel x:Name="ContentHost" Margin="20" />
                 <Button x:Name="CloseButton" Width="26" Height="26"
                         HorizontalAlignment="Right" VerticalAlignment="Top"
                         Margin="0,10,10,0" Cursor="Hand"
@@ -25,8 +24,7 @@
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border x:Name="CloseBg" CornerRadius="13" Background="Transparent">
-                                <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                                           Foreground="{DynamicResource MaterialDesignBody}"
+                                <TextBlock x:Name="CloseGlyph" Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
                                            HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>

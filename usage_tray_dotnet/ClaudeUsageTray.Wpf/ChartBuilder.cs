@@ -172,8 +172,8 @@ internal static class ChartBuilder
 
     /// <summary>
     /// One header (icon + service name) and chart per service, stacked —
-    /// the shared content both the Stats window and the Telegram /stats
-    /// image build from, so the two never quietly drift apart.
+    /// used for the Telegram /stats image, which reads fine tall/portrait
+    /// since it's just scrolled like any other photo message.
     /// </summary>
     public static StackPanel BuildServiceBlocks(
         IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
@@ -199,6 +199,41 @@ internal static class ChartBuilder
             block.Children.Add(chart);
 
             container.Children.Add(block);
+        }
+        return container;
+    }
+
+    /// <summary>
+    /// Same idea as <see cref="BuildServiceBlocks"/> but arranged side by
+    /// side instead of stacked — used for the desktop Stats window, which
+    /// (unlike a scrollable Telegram photo) has a fixed height matching the
+    /// main popup's and needs to make good use of the resulting landscape
+    /// shape rather than running off the bottom.
+    /// </summary>
+    public static StackPanel BuildServiceColumns(
+        IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
+        double columnWidth, double chartHeight, double columnGap,
+        Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush)
+    {
+        var container = new StackPanel { Orientation = Orientation.Horizontal };
+        for (var i = 0; i < serviceNames.Count; i++)
+        {
+            var serviceName = serviceNames[i];
+            var column = new StackPanel { Width = columnWidth, Margin = new Thickness(0, 0, i == serviceNames.Count - 1 ? 0 : columnGap, 0) };
+
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+            var icon = ServiceIcons.Build(serviceName, 16, textPrimary);
+            icon.Margin = new Thickness(0, 0, 8, 0);
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            header.Children.Add(icon);
+            header.Children.Add(new TextBlock { Text = serviceName, FontSize = 13, FontWeight = FontWeights.Medium, Foreground = textPrimary, VerticalAlignment = VerticalAlignment.Center });
+            column.Children.Add(header);
+
+            var points = historyStore.GetHistory(serviceName, since);
+            var chart = Build(points, columnWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"));
+            column.Children.Add(chart);
+
+            container.Children.Add(column);
         }
         return container;
     }

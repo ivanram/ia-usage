@@ -354,15 +354,15 @@ public sealed class TrayOrchestrator : IDisposable
     /// <summary>
     /// Unlike Settings, this isn't modal and stays open on its own — a
     /// second click just brings the existing window forward instead of
-    /// opening a duplicate, same pattern as _openSettingsWindow.
+    /// opening a duplicate, same pattern as _openSettingsWindow. Pins the
+    /// main panel instead of hiding it, since the whole point of Stats
+    /// opening beside it is for both to stay visible together — the user
+    /// can still unpin (or close either window) by hand.
     /// </summary>
     private void OpenStats()
     {
-        // Captured before Hide() — the popup is only visible (and its
-        // Left/Top only meaningful) while this method's caller, its own
-        // "Estadísticas" button click, is still on the call stack.
         var anchor = new Rect(_popup.Left, _popup.Top, _popup.ActualWidth, _popup.ActualHeight);
-        _popup.Hide();
+        _popup.SetPinned(true);
 
         if (_statsWindow is not null)
         {

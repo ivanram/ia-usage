@@ -9,16 +9,31 @@ namespace ClaudeUsageTray;
 
 public partial class StatsWindow : Window
 {
-    // Matches PopupWindow's own content width (SingleColumnWidth) exactly,
-    // so the two windows read as a matched pair side by side rather than
-    // Stats looking like an unrelated dialog.
-    private const double ChartWidth = 288;
-    private const double ChartHeight = 130;
+    // Landscape layout: one column per service side by side, rather than
+    // stacked — the window's height is pinned to match the main popup's,
+    // so going wide (not tall) is how it fits everyone's chart in without
+    // the content getting cramped or clipped.
+    private const double ColumnWidth = 190;
+    private const double ColumnGap = 16;
     private const double AnchorGap = 12;
+
+    // Same Grid Margin="18" (drop-shadow clearance) + ContentHost
+    // Margin="20" scheme PopupWindow uses — kept as the same two numbers
+    // here so the two windows' outer chrome matches exactly, not just
+    // their colors.
+    private const double ChromeMargin = (18 * 2) + (20 * 2);
+
+    // Rough heights of the fixed header content above the charts (title,
+    // subtitle, per-column icon+name row) — approximate since asking WPF
+    // for the real number would mean a live layout pass, but close enough
+    // that the chart area doesn't visibly overshoot the window's fixed
+    // height by more than a couple of pixels.
+    private const double TitleHeight = 26;
+    private const double SubtitleHeight = 34;
+    private const double ColumnHeaderHeight = 24;
 
     private readonly List<string> _serviceNames;
     private readonly UsageHistoryStore _historyStore;
-    private readonly Rect _anchorBounds;
 
     // Same reasoning as SettingsWindow's taskbar icon fields — built once
     // and kept alive for the window's lifetime, sent to Windows via
@@ -29,33 +44,31 @@ public partial class StatsWindow : Window
 
     /// <summary>
     /// <paramref name="anchorBounds"/> is the main popup's on-screen bounds
-    /// at the moment Stats was opened from it (captured before the popup
-    /// hides) — Stats opens just to its left by default.
+    /// at the moment Stats was opened from it — Stats matches its height
+    /// exactly and opens just to its left. Width/height are computed and
+    /// set directly here (not via SizeToContent) so the correct position
+    /// is known immediately, with no need to wait for a Loaded pass the
+    /// way a content-driven size would require.
     /// </summary>
     public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, Rect anchorBounds)
     {
         InitializeComponent();
         _serviceNames = serviceNames;
         _historyStore = historyStore;
-        _anchorBounds = anchorBounds;
         Title = Strings.T("stats.title");
 
-        // Same lesson as ToastWindow's positioning bug: this window's real
-        // size isn't known until after its first layout pass, so it's
-        // parked off-screen and only moved into place once Loaded fires
-        // with ActualWidth/ActualHeight actually populated.
-        Left = -10000;
-        Top = -10000;
-        Loaded += OnLoadedPosition;
+        var contentWidth = _serviceNames.Count == 0
+            ? 240
+            : _serviceNames.Count * ColumnWidth + Math.Max(0, _serviceNames.Count - 1) * ColumnGap;
 
-        Render();
-    }
+        Width = contentWidth + ChromeMargin;
+        Height = anchorBounds.Height;
+        ContentHost.Width = contentWidth;
 
-    private void OnLoadedPosition(object sender, RoutedEventArgs e)
-    {
-        Loaded -= OnLoadedPosition;
-        Left = _anchorBounds.Left - ActualWidth - AnchorGap;
-        Top = _anchorBounds.Top;
+        Left = anchorBounds.Left - Width - AnchorGap;
+        Top = anchorBounds.Top;
+
+        Render(contentWidth);
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -81,27 +94,53 @@ public partial class StatsWindow : Window
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
-    private void Render()
+    /// <summary>
+    /// Same hand-picked colors as PopupWindow.ApplyThemeColors() — not the
+    /// MaterialDesignPaper/Body resources, which read as a subtly different
+    /// (slightly whiter/flatter) shade than the popup's own background and
+    /// made the two windows look like they didn't belong to the same app
+    /// sitting right next to each other.
+    /// </summary>
+    private void Render(double contentWidth)
     {
         ContentHost.Children.Clear();
-        RootBorder.SetResourceReference(Border.BackgroundProperty, "MaterialDesignPaper");
 
-        var textPrimary = (Brush)FindResource("MaterialDesignBody");
-        var textSecondary = (Brush)FindResource("MaterialDesignBodyLight");
+        var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+
+        RootBorder.Background = isDark
+            ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
+            : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));
+
+        var textPrimary = isDark
+            ? new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2))
+            : new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A));
+
+        var textSecondary = isDark
+            ? new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xB8))
+            : new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
+
+        var gridBrush = isDark
+            ? new SolidColorBrush(Color.FromRgb(0x45, 0x45, 0x48))
+            : new SolidColorBrush(Color.FromRgb(0xE2, 0xE2, 0xE2));
+
         var accent = (Brush)FindResource("MaterialDesign.Brush.Primary");
-        var gridBrush = (Brush)FindResource("MaterialDesignDivider");
         var fillBrush = accent.Clone();
         fillBrush.Opacity = 0.16;
 
-        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4) };
-        titleRow.Children.Add(new TextBlock
+        CloseButton.ApplyTemplate();
+        if (CloseButton.Template.FindName("CloseGlyph", CloseButton) is TextBlock closeGlyph)
+        {
+            closeGlyph.Foreground = textPrimary;
+        }
+
+        ContentHost.Children.Add(new TextBlock
         {
             Text = Strings.T("stats.title"),
             FontSize = 17,
             FontWeight = FontWeights.Bold,
             Foreground = textPrimary,
+            Margin = new Thickness(0, 0, 0, 4),
         });
-        ContentHost.Children.Add(titleRow);
 
         ContentHost.Children.Add(new TextBlock
         {
@@ -123,8 +162,10 @@ public partial class StatsWindow : Window
             return;
         }
 
+        var chartHeight = Math.Max(50, Height - ChromeMargin - TitleHeight - SubtitleHeight - ColumnHeaderHeight);
         var since = DateTimeOffset.UtcNow.AddHours(-24);
-        var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since, ChartWidth, ChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush);
-        ContentHost.Children.Add(blocks);
+        var columns = ChartBuilder.BuildServiceColumns(_serviceNames, _historyStore, since,
+            ColumnWidth, chartHeight, ColumnGap, textPrimary, textSecondary, accent, fillBrush, gridBrush);
+        ContentHost.Children.Add(columns);
     }
 }
