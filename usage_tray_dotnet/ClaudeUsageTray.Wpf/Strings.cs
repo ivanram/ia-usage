@@ -76,6 +76,11 @@ internal static class Strings
         ["telegram.setup.2"] = "2. Envíale /newbot y sigue los pasos para crear tu bot.",
         ["telegram.setup.3"] = "3. Pega aquí el token que te entregue y guarda los ajustes.",
         ["telegram.setup.4"] = "4. Escríbele /uso a tu nuevo bot para vincular el chat.",
+        ["telegram.notifyusage.label"] = "Recibir notificaciones de uso por Telegram",
+        ["telegram.notifyusage.hint"] = "Te avisará por Telegram cuando se reinicie un límite o se agote, igual que en el escritorio",
+        ["telegram.notify80.label"] = "Recibir también avisos al 80%",
+        ["telegram.notify80.hint"] = "Además te avisará por Telegram en cuanto un servicio llegue al 80% de uso",
+        ["telegram.notify80.message"] = "Ojo, que tienes {0} al 80% 🫣",
 
         ["popup.noservices"] = "No hay servicios activos. Ábrelos desde Ajustes.",
         ["popup.error.generic"] = "No se pudo leer el uso",
@@ -185,6 +190,11 @@ internal static class Strings
         ["telegram.setup.2"] = "2. Send it /newbot and follow the steps to create your bot.",
         ["telegram.setup.3"] = "3. Paste the token it gives you here and save your settings.",
         ["telegram.setup.4"] = "4. Message /uso to your new bot to link the chat.",
+        ["telegram.notifyusage.label"] = "Get usage notifications on Telegram",
+        ["telegram.notifyusage.hint"] = "You'll be notified on Telegram whenever a limit resets or runs out, same as on the desktop",
+        ["telegram.notify80.label"] = "Also notify at 80%",
+        ["telegram.notify80.hint"] = "Also pings you on Telegram as soon as a service reaches 80% usage",
+        ["telegram.notify80.message"] = "Heads up, {0} is at 80% 🫣",
 
         ["popup.noservices"] = "No active services. Enable them from Settings.",
         ["popup.error.generic"] = "Couldn't read usage",

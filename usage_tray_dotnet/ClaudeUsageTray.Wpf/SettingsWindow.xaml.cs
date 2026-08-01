@@ -50,6 +50,8 @@ public partial class SettingsWindow : Window
     private ToggleButton _notifyResetGrok = null!;
     private ToggleButton _notifySound = null!;
     private ToggleButton _telegramEnabled = null!;
+    private ToggleButton _telegramNotifyUsage = null!;
+    private ToggleButton _telegramNotify80 = null!;
     private TextBox _telegramToken = null!;
     private ToggleButton _autoStart = null!;
     private ToggleButton _animationsEnabled = null!;
@@ -545,6 +547,20 @@ public partial class SettingsWindow : Window
             stack.Children.Add(BulletPoint(Strings.T("telegram.setup.3")));
             stack.Children.Add(BulletPoint(Strings.T("telegram.setup.4")));
         }
+
+        stack.Children.Add(new Border { Height = 18 });
+        stack.Children.Add(BuildSwitchRow(Strings.T("telegram.notifyusage.label"), Strings.T("telegram.notifyusage.hint"), Result.TelegramNotifyUsage, out _telegramNotifyUsage));
+        stack.Children.Add(new Border { Height = 18 });
+        stack.Children.Add(BuildSwitchRow(Strings.T("telegram.notify80.label"), Strings.T("telegram.notify80.hint"), Result.TelegramNotify80Percent, out _telegramNotify80));
+
+        void UpdateNotify80Availability() => _telegramNotify80.IsEnabled = _telegramNotifyUsage.IsChecked == true;
+        _telegramNotifyUsage.Checked += (s, e) => UpdateNotify80Availability();
+        _telegramNotifyUsage.Unchecked += (s, e) =>
+        {
+            _telegramNotify80.IsChecked = false;
+            UpdateNotify80Availability();
+        };
+        UpdateNotify80Availability();
     }
 
     private static TextBlock BulletPoint(string text) => new()
@@ -604,6 +620,8 @@ public partial class SettingsWindow : Window
             TelegramEnabled = _telegramEnabled.IsChecked == true,
             TelegramBotToken = newToken,
             TelegramChatId = tokenChanged ? null : _telegramChatId,
+            TelegramNotifyUsage = _telegramNotifyUsage.IsChecked == true,
+            TelegramNotify80Percent = _telegramNotify80.IsChecked == true,
             Language = _selectedLanguage,
             AutoCheckUpdates = _autoCheckUpdates.IsChecked == true,
             // Not surfaced in the UI — carried forward so a save right

@@ -60,6 +60,26 @@ internal static class ChartBuilder
         var maxTime = points[^1].RecordedAt;
         var spanSeconds = Math.Max(1, (maxTime - minTime).TotalSeconds);
 
+        // One dashed vertical line per hour boundary crossed, so it's easy
+        // to eyeball roughly when a jump happened instead of only reading
+        // it off the start/end labels.
+        var localMin = minTime.ToLocalTime();
+        var hourCursor = new DateTimeOffset(localMin.Year, localMin.Month, localMin.Day, localMin.Hour, 0, 0, localMin.Offset).AddHours(1);
+        while (hourCursor < maxTime)
+        {
+            var x = padLeft + plotWidth * ((hourCursor - minTime).TotalSeconds / spanSeconds);
+            host.Children.Add(new Line
+            {
+                X1 = x, X2 = x, Y1 = padTop, Y2 = padTop + plotHeight,
+                Stroke = gridBrush,
+                StrokeThickness = 1,
+                StrokeDashArray = new DoubleCollection { 2, 3 },
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+            });
+            hourCursor = hourCursor.AddHours(1);
+        }
+
         var screenPoints = points.Select(p =>
         {
             var x = padLeft + plotWidth * ((p.RecordedAt - minTime).TotalSeconds / spanSeconds);
@@ -204,22 +224,23 @@ internal static class ChartBuilder
     }
 
     /// <summary>
-    /// Same idea as <see cref="BuildServiceBlocks"/> but arranged side by
-    /// side instead of stacked — used for the desktop Stats window, which
-    /// (unlike a scrollable Telegram photo) has a fixed height matching the
-    /// main popup's and needs to make good use of the resulting landscape
-    /// shape rather than running off the bottom.
+    /// Same idea as <see cref="BuildServiceBlocks"/> but arranged in a
+    /// wrapping grid instead of stacked — used for the desktop Stats
+    /// window, which is resizable and wants to make good use of whatever
+    /// landscape shape the user drags it into (e.g. two services per row)
+    /// rather than either running off the bottom or stretching one lone
+    /// row arbitrarily wide.
     /// </summary>
-    public static StackPanel BuildServiceColumns(
+    public static WrapPanel BuildServiceColumns(
         IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
         double columnWidth, double chartHeight, double columnGap,
         Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush)
     {
-        var container = new StackPanel { Orientation = Orientation.Horizontal };
+        var container = new WrapPanel();
         for (var i = 0; i < serviceNames.Count; i++)
         {
             var serviceName = serviceNames[i];
-            var column = new StackPanel { Width = columnWidth, Margin = new Thickness(0, 0, i == serviceNames.Count - 1 ? 0 : columnGap, 0) };
+            var column = new StackPanel { Width = columnWidth, Margin = new Thickness(0, 0, columnGap, columnGap) };
 
             var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
             var icon = ServiceIcons.Build(serviceName, 16, textPrimary);

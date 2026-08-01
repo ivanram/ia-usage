@@ -34,6 +34,14 @@ public sealed class TelegramBotService
     private readonly UsageHistoryStore _historyStore;
     private CancellationTokenSource? _cts;
 
+    // Kept as instance state (rather than locals captured by the receive
+    // loop's closures, as before) specifically so SendNotificationAsync can
+    // push a message from outside any incoming-message handler — the
+    // reset/exhausted/80% notifications originate from TrayOrchestrator's
+    // own refresh cycle, not from anything the user sent the bot.
+    private TelegramBotClient? _client;
+    private long? _boundChatId;
+
     public TelegramBotService(Func<IEnumerable<UsageSnapshot>> getSnapshots, UsageHistoryStore historyStore)
     {
         _getSnapshots = getSnapshots;
@@ -44,6 +52,8 @@ public sealed class TelegramBotService
     {
         Stop();
         var client = new TelegramBotClient(token);
+        _client = client;
+        _boundChatId = boundChatId;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
 
@@ -62,6 +72,7 @@ public sealed class TelegramBotService
                 if (boundChatId is null)
                 {
                     boundChatId = chatId;
+                    _boundChatId = chatId;
                     onBound(chatId);
                     await bot.SendMessage(chatId,
                         "Vinculado. Pulsa el botón o escribe /uso cuando quieras ver tu consumo de Claude/ChatGPT.",
@@ -125,6 +136,25 @@ public sealed class TelegramBotService
     {
         _cts?.Cancel();
         _cts = null;
+        _client = null;
+    }
+
+    /// <summary>
+    /// Fire-and-forget push for the reset/exhausted/80% notifications —
+    /// best effort, since a Telegram hiccup here should never affect the
+    /// desktop toast that already fired alongside it.
+    /// </summary>
+    public async Task SendNotificationAsync(string message)
+    {
+        if (_client is null || _boundChatId is null) return;
+        try
+        {
+            await _client.SendMessage(_boundChatId.Value, message);
+        }
+        catch
+        {
+            // best effort
+        }
     }
 
     /// <summary>

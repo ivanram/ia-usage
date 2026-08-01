@@ -40,6 +40,11 @@ public sealed class AppSettings
     public bool NotifyResetGrok { get; set; } = true;
     public bool NotifySoundEnabled { get; set; }
 
+    /// <summary>Forwards the same reset/exhausted text the desktop toast shows to the bound Telegram chat.</summary>
+    public bool TelegramNotifyUsage { get; set; }
+    /// <summary>Only meaningful alongside <see cref="TelegramNotifyUsage"/> — an extra Telegram-only heads-up the first time a service's primary bar crosses 80%.</summary>
+    public bool TelegramNotify80Percent { get; set; }
+
     public AppLanguage Language { get; set; } = AppLanguage.Spanish;
     public bool AutoCheckUpdates { get; set; } = true;
     /// <summary>Set by the "Hoy no, mañana" button on the update dialog — silent startup checks skip until this passes; a manual check always ignores it.</summary>

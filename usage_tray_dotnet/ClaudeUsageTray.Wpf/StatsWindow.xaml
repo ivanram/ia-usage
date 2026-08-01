@@ -1,41 +1,68 @@
 <Window x:Class="ClaudeUsageTray.StatsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Estadísticas"
-        WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent"
-        ShowInTaskbar="True"
-        ResizeMode="NoResize"
-        SizeToContent="Manual"
+        MinWidth="420" MinHeight="260"
         WindowStartupLocation="Manual"
         SourceInitialized="OnSourceInitialized">
-    <Grid Margin="18">
-        <Border x:Name="RootBorder" CornerRadius="16" MouseLeftButtonDown="OnRootMouseLeftButtonDown">
-            <Border.Effect>
-                <DropShadowEffect BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black" />
-            </Border.Effect>
-            <Grid>
-                <StackPanel x:Name="ContentHost" Margin="20" />
-                <Button x:Name="CloseButton" Width="26" Height="26"
-                        HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,10,10,0" Cursor="Hand"
-                        Click="OnCloseClick">
-                    <Button.Template>
-                        <ControlTemplate TargetType="Button">
-                            <Border x:Name="CloseBg" CornerRadius="13" Background="Transparent">
-                                <TextBlock x:Name="CloseGlyph" Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="CloseBg" Property="Background" Value="#14808080" />
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Button.Template>
+    <!--
+    Unlike the popup/toast/dialog windows, this one needs to be genuinely
+    resizable — AllowsTransparency="True" windows can't support
+    ResizeMode="CanResize" (WPF just refuses real edge-drag resizing on
+    them), so this uses the same WindowChrome + DWM-rounded-corners
+    approach SettingsWindow already does instead: a real, opaque, resizable
+    window with the native title bar hidden and redrawn ourselves.
+    -->
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="36" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <Style x:Key="MiniCaptionButton" TargetType="Button">
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="shell:WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" CornerRadius="13" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#14808080" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="36" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="20,0,10,0">
+            <TextBlock x:Name="TitleTextBlock" Text="Estadísticas" FontSize="15" FontWeight="Medium" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <Button x:Name="ResetSizeButton" Style="{StaticResource MiniCaptionButton}" Margin="0,0,2,0"
+                        Click="OnResetSizeClick" ToolTip="Restablecer tamaño">
+                    <TextBlock x:Name="ResetSizeGlyph" Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
                 </Button>
-            </Grid>
-        </Border>
+                <Button x:Name="CloseButton" Style="{StaticResource MiniCaptionButton}" Click="OnCloseClick">
+                    <TextBlock x:Name="CloseGlyph" Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="ContentHost" Margin="20,4,20,20" />
+        </ScrollViewer>
     </Grid>
 </Window>

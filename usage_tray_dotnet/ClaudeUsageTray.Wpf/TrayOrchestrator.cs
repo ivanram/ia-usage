@@ -588,20 +588,23 @@ public sealed class TrayOrchestrator : IDisposable
 
         var resetDetected = false;
         var exhaustedDetected = false;
+        var eightyDetected = false;
         foreach (var bar in snap.Bars)
         {
             var key = $"{serviceName}|{bar.Label}";
             if (_lastPercents.TryGetValue(key, out var prev))
             {
                 if (prev >= 10 && bar.Percent < prev - 4) resetDetected = true;
-                // Fires once on the crossing into 100%, not on every
-                // refresh that happens to still read 100% afterward.
+                // Fires once on the crossing into 100%/80%, not on every
+                // refresh that happens to still read above the line afterward.
                 if (prev < 100 && bar.Percent >= 100) exhaustedDetected = true;
+                if (prev < 80 && bar.Percent >= 80) eightyDetected = true;
                 NotifyLog($"  [{key}] prev={prev} now={bar.Percent} resetDetected={resetDetected} exhaustedDetected={exhaustedDetected}");
             }
             else
             {
                 if (bar.Percent >= 100) exhaustedDetected = true;
+                else if (bar.Percent >= 80) eightyDetected = true;
                 NotifyLog($"  [{key}] no previous reading, now={bar.Percent} exhaustedDetected={exhaustedDetected}");
             }
             _lastPercents[key] = bar.Percent;
@@ -610,6 +613,13 @@ public sealed class TrayOrchestrator : IDisposable
         NotifyLog($"CheckForReset [{serviceName}] result: resetDetected={resetDetected} exhaustedDetected={exhaustedDetected}");
         if (resetDetected) ShowResetToast(serviceName);
         if (exhaustedDetected) ShowExhaustedToast(serviceName);
+        // 80% is a Telegram-only heads-up — no desktop toast/sound for it,
+        // matching the user's ask for a lighter-weight "just so you know"
+        // separate from the more attention-grabbing reset/exhausted ones.
+        if (eightyDetected && _settings.TelegramNotifyUsage && _settings.TelegramNotify80Percent)
+        {
+            _ = _telegram.SendNotificationAsync(Strings.F("telegram.notify80.message", serviceName));
+        }
     }
 
     private static readonly object NotifyLogLock = new();
@@ -632,18 +642,20 @@ public sealed class TrayOrchestrator : IDisposable
 
     private void ShowResetToast(string serviceName)
     {
+        var message = Strings.F("toast.reset", serviceName);
         var toast = new ToastWindow();
-        toast.ShowNear(serviceName, Strings.F("toast.reset", serviceName));
+        toast.ShowNear(serviceName, message);
         if (_settings.NotifySoundEnabled) PlaySound(ref _chimePlayer, "chime.wav");
+        if (_settings.TelegramNotifyUsage) _ = _telegram.SendNotificationAsync(message);
     }
 
     private void ShowExhaustedToast(string serviceName)
     {
         NotifyLog($"ShowExhaustedToast [{serviceName}] entered");
+        var message = Strings.F("toast.exhausted", serviceName);
         try
         {
             var toast = new ToastWindow();
-            var message = Strings.F("toast.exhausted", serviceName);
             NotifyLog($"ShowExhaustedToast [{serviceName}] message='{message}', calling ShowNear...");
             toast.ShowNear(serviceName, message);
             NotifyLog($"ShowExhaustedToast [{serviceName}] ShowNear returned, IsVisible={toast.IsVisible} Left={toast.Left} Top={toast.Top}");
@@ -653,6 +665,7 @@ public sealed class TrayOrchestrator : IDisposable
             NotifyLog($"ShowExhaustedToast [{serviceName}] threw: {ex}");
         }
         if (_settings.NotifySoundEnabled) PlaySound(ref _tromboneSoundPlayer, "sad_trombone.wav");
+        if (_settings.TelegramNotifyUsage) _ = _telegram.SendNotificationAsync(message);
     }
 
     private static void PlaySound(ref SoundPlayer? player, string fileName)
