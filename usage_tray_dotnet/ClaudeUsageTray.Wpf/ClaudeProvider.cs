@@ -22,13 +22,7 @@ public sealed class ClaudeProvider : IUsageProvider
             if (!usageResp.ok) { window.__claudeUsageResult = JSON.stringify({error:'usage_http_' + usageResp.status}); return; }
             const usage = await usageResp.json();
 
-            let credits = null;
-            try {
-              const creditsResp = await fetch(`https://claude.ai/api/organizations/${org}/prepaid/credits`, {credentials:'include'});
-              if (creditsResp.ok) credits = await creditsResp.json();
-            } catch (e) { /* optional: extra-usage total is a nice-to-have, not fetched below if this fails */ }
-
-            window.__claudeUsageResult = JSON.stringify({ok:true, usage, credits});
+            window.__claudeUsageResult = JSON.stringify({ok:true, usage});
           } catch (e) {
             window.__claudeUsageResult = JSON.stringify({error:String(e)});
           }
@@ -70,6 +64,15 @@ public sealed class ClaudeProvider : IUsageProvider
             weeklyReset = DateTimeOffset.Parse(resetsAt.GetString()!).ToLocalTime();
         }
 
+        // The prepaid/credits endpoint's tranches only carry each grant's
+        // original granted_amount_minor_units, not what's left of it — an
+        // account with promo credits expiring/renewing over time can have
+        // tranches summing to far more than the actual current balance
+        // (confirmed: a user's tranches summed to 85 EUR granted-to-date
+        // while claude.ai's own "Saldo actual" showed 39.16 EUR). Rather
+        // than guess at a "remaining" field name that might not exist,
+        // this only reports the one number the API gives us that's
+        // unambiguous: credits actually spent.
         string? creditsLine = null;
         if (usage.TryGetProperty("extra_usage", out var extra) && extra.ValueKind == JsonValueKind.Object
             && extra.TryGetProperty("used_credits", out var usedCredits) && usedCredits.ValueKind == JsonValueKind.Number)
@@ -78,17 +81,7 @@ public sealed class ClaudeProvider : IUsageProvider
             var currency = extra.TryGetProperty("currency", out var cur) ? cur.GetString() ?? "" : "";
             var used = usedCredits.GetDecimal() / (decimal)Math.Pow(10, decimals);
 
-            decimal? total = null;
-            if (root.TryGetProperty("credits", out var credits) && credits.ValueKind == JsonValueKind.Object)
-            {
-                total = SumGrantedMinorUnits(credits, "tranches") + SumGrantedMinorUnits(credits, "promo_tranches");
-                if (total == 0) total = null;
-                else total /= (decimal)Math.Pow(10, decimals);
-            }
-
-            creditsLine = total is null
-                ? Strings.F("provider.claude.credits.used", used, currency)
-                : Strings.F("provider.claude.credits.used_of", used, total, currency);
+            creditsLine = Strings.F("provider.claude.credits.used", used, currency);
         }
 
         return new UsageSnapshot
@@ -102,19 +95,5 @@ public sealed class ClaudeProvider : IUsageProvider
             },
             ExtraLine = creditsLine,
         };
-    }
-
-    private static decimal SumGrantedMinorUnits(JsonElement credits, string arrayName)
-    {
-        if (!credits.TryGetProperty(arrayName, out var arr) || arr.ValueKind != JsonValueKind.Array) return 0;
-        decimal sum = 0;
-        foreach (var item in arr.EnumerateArray())
-        {
-            if (item.TryGetProperty("granted_amount_minor_units", out var g) && g.ValueKind == JsonValueKind.Number)
-            {
-                sum += g.GetDecimal();
-            }
-        }
-        return sum;
     }
 }

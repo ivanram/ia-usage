@@ -507,10 +507,13 @@ public sealed class TrayOrchestrator : IDisposable
     /// reading — usage only ever climbs within a window otherwise. The
     /// small margin (4 points) and floor (previous reading >= 10%) keep
     /// ordinary jitter from a re-fetch from being mistaken for a reset.
-    /// Nothing fires on the very first reading for a bar (no baseline yet)
-    /// for either the reset or the exhausted check — the same per-service
-    /// toggle gates both, since "avísame de este servicio" naturally
-    /// covers both ends of the bar.
+    /// The reset check needs a real previous reading to compare against,
+    /// so it never fires on a bar's very first reading — but the exhausted
+    /// check is the opposite: _lastPercents is only ever in-memory, so
+    /// "first reading" here really means "since this app instance
+    /// started", and if the bar is already sitting at 100% right then, the
+    /// user should still hear about it once per launch rather than only
+    /// catching a future 0->100 crossing they might never see.
     /// </summary>
     private void CheckForReset(string serviceName, UsageSnapshot snap)
     {
@@ -527,6 +530,10 @@ public sealed class TrayOrchestrator : IDisposable
                 // Fires once on the crossing into 100%, not on every
                 // refresh that happens to still read 100% afterward.
                 if (prev < 100 && bar.Percent >= 100) exhaustedDetected = true;
+            }
+            else if (bar.Percent >= 100)
+            {
+                exhaustedDetected = true;
             }
             _lastPercents[key] = bar.Percent;
         }
