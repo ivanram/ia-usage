@@ -392,7 +392,11 @@ public sealed class TrayOrchestrator : IDisposable
         lock (LogLock)
         {
             try { File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n"); }
-            catch { /* best effort */ }
+            catch (Exception ex)
+            {
+                try { File.AppendAllText(Path.Combine(Paths.LogsDir, "log_failures.txt"), $"{DateTime.Now:O} orchestrator Log failed: {ex}\n"); }
+                catch { /* truly nothing more we can do */ }
+            }
         }
     }
 
@@ -544,7 +548,9 @@ public sealed class TrayOrchestrator : IDisposable
     /// </summary>
     private void CheckForReset(string serviceName, UsageSnapshot snap)
     {
-        if (!IsNotifyEnabled(serviceName)) return;
+        var notifyEnabled = IsNotifyEnabled(serviceName);
+        NotifyLog($"CheckForReset [{serviceName}] notifyEnabled={notifyEnabled} bars={string.Join(",", snap.Bars.Select(b => $"{b.Label}={b.Percent}%"))}");
+        if (!notifyEnabled) return;
 
         var resetDetected = false;
         var exhaustedDetected = false;
@@ -557,16 +563,29 @@ public sealed class TrayOrchestrator : IDisposable
                 // Fires once on the crossing into 100%, not on every
                 // refresh that happens to still read 100% afterward.
                 if (prev < 100 && bar.Percent >= 100) exhaustedDetected = true;
+                NotifyLog($"  [{key}] prev={prev} now={bar.Percent} resetDetected={resetDetected} exhaustedDetected={exhaustedDetected}");
             }
-            else if (bar.Percent >= 100)
+            else
             {
-                exhaustedDetected = true;
+                if (bar.Percent >= 100) exhaustedDetected = true;
+                NotifyLog($"  [{key}] no previous reading, now={bar.Percent} exhaustedDetected={exhaustedDetected}");
             }
             _lastPercents[key] = bar.Percent;
         }
 
+        NotifyLog($"CheckForReset [{serviceName}] result: resetDetected={resetDetected} exhaustedDetected={exhaustedDetected}");
         if (resetDetected) ShowResetToast(serviceName);
         if (exhaustedDetected) ShowExhaustedToast(serviceName);
+    }
+
+    private static readonly object NotifyLogLock = new();
+    private static void NotifyLog(string msg)
+    {
+        lock (NotifyLogLock)
+        {
+            try { File.AppendAllText(Path.Combine(Paths.LogsDir, "notify_debug.txt"), $"{DateTime.Now:O} {msg}\n"); }
+            catch { /* best effort */ }
+        }
     }
 
     private bool IsNotifyEnabled(string serviceName) => serviceName switch
@@ -586,8 +605,19 @@ public sealed class TrayOrchestrator : IDisposable
 
     private void ShowExhaustedToast(string serviceName)
     {
-        var toast = new ToastWindow();
-        toast.ShowNear(serviceName, Strings.F("toast.exhausted", serviceName));
+        NotifyLog($"ShowExhaustedToast [{serviceName}] entered");
+        try
+        {
+            var toast = new ToastWindow();
+            var message = Strings.F("toast.exhausted", serviceName);
+            NotifyLog($"ShowExhaustedToast [{serviceName}] message='{message}', calling ShowNear...");
+            toast.ShowNear(serviceName, message);
+            NotifyLog($"ShowExhaustedToast [{serviceName}] ShowNear returned, IsVisible={toast.IsVisible} Left={toast.Left} Top={toast.Top}");
+        }
+        catch (Exception ex)
+        {
+            NotifyLog($"ShowExhaustedToast [{serviceName}] threw: {ex}");
+        }
         if (_settings.NotifySoundEnabled) PlaySound(ref _tromboneSoundPlayer, "sad_trombone.wav");
     }
 

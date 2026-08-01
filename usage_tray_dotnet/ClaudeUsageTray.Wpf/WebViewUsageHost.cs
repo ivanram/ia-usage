@@ -67,7 +67,11 @@ public sealed class WebViewUsageHost : Window
         lock (LogLock)
         {
             try { File.AppendAllText(DebugFile, $"{DateTime.Now:O} {msg}\n"); }
-            catch { /* best effort */ }
+            catch (Exception ex)
+            {
+                try { File.AppendAllText(Path.Combine(Paths.LogsDir, "log_failures.txt"), $"{DateTime.Now:O} webview Log failed: {ex}\n"); }
+                catch { /* truly nothing more we can do */ }
+            }
         }
     }
 
