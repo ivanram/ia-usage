@@ -29,6 +29,7 @@ public sealed class TrayOrchestrator : IDisposable
     private readonly Dictionary<string, UsageSnapshot> _lastSnapshots = new();
     private readonly Dictionary<string, int> _lastPercents = new();
     private static SoundPlayer? _chimePlayer;
+    private static SoundPlayer? _tromboneSoundPlayer;
     private DateTime? _lastUpdated;
 
     private TaskbarIcon _trayIcon = null!;
@@ -43,18 +44,19 @@ public sealed class TrayOrchestrator : IDisposable
     public TrayOrchestrator()
     {
         _telegram = new TelegramBotService(() => _providers.Where(IsEnabled)
-            .Select(p => _lastSnapshots.TryGetValue(p.Name, out var s) ? s : new UsageSnapshot { ServiceName = p.Name, Ok = false, ErrorMessage = "Cargando..." }));
+            .Select(p => _lastSnapshots.TryGetValue(p.Name, out var s) ? s : new UsageSnapshot { ServiceName = p.Name, Ok = false, ErrorMessage = Strings.T("loading") }));
     }
 
     public void Start()
     {
+        Strings.Current = _settings.Language;
         ApplyTheme();
 
         _trayIcon = new TaskbarIcon
         {
             Id = TrayIconGuid,
             Icon = IconFactory.BuildRobotIcon(),
-            ToolTipText = _settings.PopupMode == PopupMode.Rich ? "Uso de IA" : "Usage Tray: iniciando...",
+            ToolTipText = _settings.PopupMode == PopupMode.Rich ? Strings.T("app.name") : Strings.F("tray.tooltip.starting", Strings.T("app.name")),
             ContextMenu = BuildContextMenu(),
         };
         _trayIcon.TrayLeftMouseUp += (s, e) => OnTrayLeftClick();
@@ -257,15 +259,15 @@ public sealed class TrayOrchestrator : IDisposable
     {
         var menu = new ContextMenu();
 
-        var refreshItem = new MenuItem { Header = "Actualizar ahora", Icon = MenuGlyph(MenuIconRefresh) };
+        var refreshItem = new MenuItem { Header = Strings.T("menu.refresh"), Icon = MenuGlyph(MenuIconRefresh) };
         refreshItem.Click += async (s, e) => await RefreshAllAsync();
         menu.Items.Add(refreshItem);
 
-        var settingsItem = new MenuItem { Header = "Ajustes...", Icon = MenuGlyph(MenuIconSettings) };
+        var settingsItem = new MenuItem { Header = Strings.T("menu.settings"), Icon = MenuGlyph(MenuIconSettings) };
         settingsItem.Click += (s, e) => OpenSettings();
         menu.Items.Add(settingsItem);
 
-        var loginMenu = new MenuItem { Header = "Iniciar sesión", Icon = MenuGlyph(MenuIconLogin) };
+        var loginMenu = new MenuItem { Header = Strings.T("menu.login"), Icon = MenuGlyph(MenuIconLogin) };
         foreach (var provider in _providers.Where(p => p.SupportsLogin))
         {
             var item = new MenuItem { Header = provider.Name };
@@ -276,7 +278,7 @@ public sealed class TrayOrchestrator : IDisposable
 
         menu.Items.Add(new Separator());
 
-        var exitItem = new MenuItem { Header = "Salir", Icon = MenuGlyph(MenuIconExit) };
+        var exitItem = new MenuItem { Header = Strings.T("menu.exit"), Icon = MenuGlyph(MenuIconExit) };
         exitItem.Click += (s, e) => ExitApp();
         menu.Items.Add(exitItem);
 
@@ -304,7 +306,8 @@ public sealed class TrayOrchestrator : IDisposable
                 var provider = _providers.First(p => p.Name == name);
                 _ = LoginAsync(provider);
             },
-            previewTheme: ThemeHelper.Apply);
+            previewTheme: ThemeHelper.Apply,
+            previewLanguage: PreviewLanguage);
         _openSettingsWindow = window;
 
         window.ShowDialog();
@@ -313,15 +316,24 @@ public sealed class TrayOrchestrator : IDisposable
         if (!window.Saved)
         {
             ApplyTheme(); // revert any live theme preview back to the saved setting
+            PreviewLanguage(_settings.Language); // same revert, for the language preview
             return;
         }
 
         _settings = window.Result;
         _settings.Save();
         ApplyTheme();
+        PreviewLanguage(_settings.Language);
         ApplyRefreshInterval();
         ApplyTelegramSettings();
         _ = RefreshAllAsync();
+    }
+
+    /// <summary>Applies a language process-wide and rebuilds anything with text already baked in at construction time — currently just the tray context menu.</summary>
+    private void PreviewLanguage(AppLanguage language)
+    {
+        Strings.Current = language;
+        _trayIcon.ContextMenu = BuildContextMenu();
     }
 
     private void ApplyTheme()
@@ -424,7 +436,7 @@ public sealed class TrayOrchestrator : IDisposable
         Log($"enabled providers: {string.Join(",", enabled.Select(p => p.Name))}");
         if (enabled.Count == 0)
         {
-            _trayIcon.ToolTipText = "Usage Tray: no hay servicios activos (clic derecho → Ajustes)";
+            _trayIcon.ToolTipText = Strings.F("tray.tooltip.noservices", Strings.T("app.name"));
             return;
         }
 
@@ -495,24 +507,32 @@ public sealed class TrayOrchestrator : IDisposable
     /// reading — usage only ever climbs within a window otherwise. The
     /// small margin (4 points) and floor (previous reading >= 10%) keep
     /// ordinary jitter from a re-fetch from being mistaken for a reset.
-    /// Nothing fires on the very first reading for a bar (no baseline yet).
+    /// Nothing fires on the very first reading for a bar (no baseline yet)
+    /// for either the reset or the exhausted check — the same per-service
+    /// toggle gates both, since "avísame de este servicio" naturally
+    /// covers both ends of the bar.
     /// </summary>
     private void CheckForReset(string serviceName, UsageSnapshot snap)
     {
         if (!IsNotifyEnabled(serviceName)) return;
 
         var resetDetected = false;
+        var exhaustedDetected = false;
         foreach (var bar in snap.Bars)
         {
             var key = $"{serviceName}|{bar.Label}";
-            if (_lastPercents.TryGetValue(key, out var prev) && prev >= 10 && bar.Percent < prev - 4)
+            if (_lastPercents.TryGetValue(key, out var prev))
             {
-                resetDetected = true;
+                if (prev >= 10 && bar.Percent < prev - 4) resetDetected = true;
+                // Fires once on the crossing into 100%, not on every
+                // refresh that happens to still read 100% afterward.
+                if (prev < 100 && bar.Percent >= 100) exhaustedDetected = true;
             }
             _lastPercents[key] = bar.Percent;
         }
 
         if (resetDetected) ShowResetToast(serviceName);
+        if (exhaustedDetected) ShowExhaustedToast(serviceName);
     }
 
     private bool IsNotifyEnabled(string serviceName) => serviceName switch
@@ -526,16 +546,23 @@ public sealed class TrayOrchestrator : IDisposable
     private void ShowResetToast(string serviceName)
     {
         var toast = new ToastWindow();
-        toast.ShowNear(serviceName, $"El uso de {serviceName} se ha reseteado ✨");
-        if (_settings.NotifySoundEnabled) PlayChime();
+        toast.ShowNear(serviceName, Strings.F("toast.reset", serviceName));
+        if (_settings.NotifySoundEnabled) PlaySound(ref _chimePlayer, "chime.wav");
     }
 
-    private static void PlayChime()
+    private void ShowExhaustedToast(string serviceName)
+    {
+        var toast = new ToastWindow();
+        toast.ShowNear(serviceName, Strings.F("toast.exhausted", serviceName));
+        if (_settings.NotifySoundEnabled) PlaySound(ref _tromboneSoundPlayer, "sad_trombone.wav");
+    }
+
+    private static void PlaySound(ref SoundPlayer? player, string fileName)
     {
         try
         {
-            _chimePlayer ??= LoadChimePlayer();
-            _chimePlayer?.Play();
+            player ??= LoadSoundPlayer(fileName);
+            player?.Play();
         }
         catch
         {
@@ -543,9 +570,9 @@ public sealed class TrayOrchestrator : IDisposable
         }
     }
 
-    private static SoundPlayer? LoadChimePlayer()
+    private static SoundPlayer? LoadSoundPlayer(string fileName)
     {
-        var uri = new Uri("pack://application:,,,/ClaudeUsageTray;component/Assets/chime.wav");
+        var uri = new Uri($"pack://application:,,,/ClaudeUsageTray;component/Assets/{fileName}");
         var streamInfo = Application.GetResourceStream(uri);
         return streamInfo is null ? null : new SoundPlayer(streamInfo.Stream);
     }
@@ -559,7 +586,7 @@ public sealed class TrayOrchestrator : IDisposable
             // registered tray icon — an empty string just produces an empty
             // bubble, it doesn't suppress it. So this is the app name, not
             // usage data (the custom panel handles that).
-            _trayIcon.ToolTipText = "Uso de IA";
+            _trayIcon.ToolTipText = Strings.T("app.name");
             return;
         }
 

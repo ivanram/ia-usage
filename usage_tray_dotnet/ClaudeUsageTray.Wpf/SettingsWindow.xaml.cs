@@ -20,8 +20,8 @@ public partial class SettingsWindow : Window
     private const double CaptionSize = 12;
 
     private static readonly int[] HoverDelayValues = { 0, 1, 2, 3 };
-    private static readonly string[] HoverDelayLabels = { "Instantáneo", "1s", "2s", "3s" };
-    private static readonly string[] ThemeLabels = { "Sistema", "Claro", "Oscuro" };
+    private static string[] HoverDelayLabels => new[] { Strings.T("hoverdelay.instant"), "1s", "2s", "3s" };
+    private static string[] ThemeLabels => new[] { Strings.T("theme.system"), Strings.T("theme.light"), Strings.T("theme.dark") };
 
     private Slider _refreshSlider = null!;
     private TextBox _refreshTextBox = null!;
@@ -33,6 +33,8 @@ public partial class SettingsWindow : Window
     private int _selectedHoverDelay;
     private readonly Button[] _accentButtons = new Button[ThemeHelper.AccentSwatches.Length + 1];
     private string _selectedAccent;
+    private AppLanguage _selectedLanguage;
+    private ToggleButton _autoCheckUpdates = null!;
 
     // Plain green reads fine on a light card but disappears on a dark one —
     // switch to plain white in dark mode instead (resolved once at
@@ -56,6 +58,7 @@ public partial class SettingsWindow : Window
     private readonly Func<string, bool> _isLoggedIn;
     private readonly Action<string> _triggerLogin;
     private readonly Action<AppTheme> _previewTheme;
+    private readonly Action<AppLanguage> _previewLanguage;
     // Built in the constructor and sent to Windows later in OnSourceInitialized
     // — building these GDI+ icons right as the native HWND is being created
     // (i.e. doing it inside OnSourceInitialized itself) raced with that setup
@@ -68,7 +71,7 @@ public partial class SettingsWindow : Window
     public AppSettings Result { get; private set; }
     public bool Saved { get; private set; }
 
-    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme)
+    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme, Action<AppLanguage> previewLanguage)
     {
         InitializeComponent();
         Result = current;
@@ -77,9 +80,11 @@ public partial class SettingsWindow : Window
         _isDark = ThemeHelper.ResolveIsDark(current.Theme);
         _selectedHoverDelay = current.HoverDelaySeconds;
         _selectedAccent = current.AccentColor;
+        _selectedLanguage = current.Language;
         _isLoggedIn = isLoggedIn;
         _triggerLogin = triggerLogin;
         _previewTheme = previewTheme;
+        _previewLanguage = previewLanguage;
 
         // Drawn fresh at 18px (CaptionIcon's actual display size) rather
         // than extracted from the exe and downscaled — scaling a 32px+
@@ -89,15 +94,50 @@ public partial class SettingsWindow : Window
         using var captionIcon = IconFactory.BuildRobotIcon(18);
         CaptionIcon.Source = Imaging.CreateBitmapSourceFromHIcon(captionIcon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
 
-        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        VersionButton.Content = version is null ? "Uso de IA" : $"Uso de IA {version.Major}.{version.Minor}.{version.Build}";
+        ApplyChrome();
+        BuildCards();
+    }
 
-        AddCard(GlyphIcon(IconGear), "General", BuildGeneralCard);
-        AddCard(GlyphIcon(IconRefresh), "Actualización", BuildUpdateCard);
-        AddCard(GlyphIcon(IconClock), "Panel emergente", BuildPopupModeCard);
-        AddCard(GlyphIcon(IconPalette), "Apariencia", BuildAppearanceCard);
-        AddCard(AiBadgeIcon(), "Servicios", BuildServicesCard);
-        AddCard(new Image { Source = ServiceIcons.TelegramIcon, Width = 16, Height = 16 }, "Bot de Telegram", BuildTelegramCard);
+    /// <summary>Top-level chrome (title, footer buttons, version label) that isn't part of any card — re-applied on language change same as the cards themselves.</summary>
+    private void ApplyChrome()
+    {
+        Title = Strings.T("settings.title");
+        TitleTextBlock.Text = Strings.T("settings.title");
+        CancelButton.Content = Strings.T("settings.cancel");
+        SaveButton.Content = Strings.T("settings.save");
+        ToolTipService.SetToolTip(VersionButton, Strings.T("settings.version.tooltip"));
+
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        VersionButton.Content = version is null ? Strings.T("app.name") : $"{Strings.T("app.name")} {version.Major}.{version.Minor}.{version.Build}";
+    }
+
+    private void BuildCards()
+    {
+        AddCard(GlyphIcon(IconGear), Strings.T("card.general"), BuildGeneralCard);
+        AddCard(GlyphIcon(IconRefresh), Strings.T("card.update"), BuildUpdateCard);
+        AddCard(GlyphIcon(IconClock), Strings.T("card.popup"), BuildPopupModeCard);
+        AddCard(GlyphIcon(IconPalette), Strings.T("card.appearance"), BuildAppearanceCard);
+        AddCard(AiBadgeIcon(), Strings.T("card.services"), BuildServicesCard);
+        AddCard(new Image { Source = ServiceIcons.TelegramIcon, Width = 16, Height = 16 }, Strings.T("card.telegram"), BuildTelegramCard);
+    }
+
+    /// <summary>
+    /// Picking a language applies it process-wide immediately (see
+    /// _previewLanguage), so this window's own already-built content has to
+    /// be thrown away and rebuilt in the new language too — same live-apply
+    /// idea as the theme preview, just with no cheaper way to "re-skin" text
+    /// that was already baked into TextBlocks at construction time. Any
+    /// in-progress edits (slider position, unsaved toggles, a half-typed
+    /// Telegram token) are captured into Result first so the rebuild doesn't
+    /// silently discard them.
+    /// </summary>
+    private void RebuildForLanguageChange()
+    {
+        SnapshotIntoResult();
+        CardGrid.Children.Clear();
+        CardGrid.RowDefinitions.Clear();
+        ApplyChrome();
+        BuildCards();
     }
 
     /// <summary>
@@ -198,9 +238,23 @@ public partial class SettingsWindow : Window
 
     private void BuildGeneralCard(StackPanel stack)
     {
-        stack.Children.Add(BuildSwitchRow("Iniciar con Windows", "Abre la app automáticamente al encender el equipo", AutoStartHelper.IsEnabled(), out _autoStart));
+        stack.Children.Add(BuildSwitchRow(Strings.T("general.autostart.label"), Strings.T("general.autostart.hint"), AutoStartHelper.IsEnabled(), out _autoStart));
         stack.Children.Add(new Border { Height = 18 });
-        stack.Children.Add(BuildSwitchRow("Animaciones", "Anima las barras de progreso del panel emergente", Result.AnimationsEnabled, out _animationsEnabled));
+        stack.Children.Add(BuildSwitchRow(Strings.T("general.animations.label"), Strings.T("general.animations.hint"), Result.AnimationsEnabled, out _animationsEnabled));
+        stack.Children.Add(new Border { Height = 18 });
+        stack.Children.Add(BuildSwitchRow(Strings.T("general.autoupdate.label"), Strings.T("general.autoupdate.hint"), Result.AutoCheckUpdates, out _autoCheckUpdates));
+        stack.Children.Add(new Border { Height = 20 });
+
+        stack.Children.Add(Hint(Strings.T("general.language.label")));
+        var (languageRow, _) = BuildSegmented(new[] { "Español", "English" }, SelectLanguage, (int)_selectedLanguage);
+        stack.Children.Add(languageRow);
+    }
+
+    private void SelectLanguage(int index)
+    {
+        _selectedLanguage = (AppLanguage)index;
+        _previewLanguage(_selectedLanguage);
+        RebuildForLanguageChange();
     }
 
     private void BuildUpdateCard(StackPanel stack)
@@ -209,7 +263,7 @@ public partial class SettingsWindow : Window
         labelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         labelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var label = new TextBlock { Text = "Frecuencia de actualización (en minutos)", FontSize = BodySize, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        var label = new TextBlock { Text = Strings.T("update.frequency.label"), FontSize = BodySize, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         Grid.SetColumn(label, 0);
 
         _refreshTextBox = new TextBox
@@ -244,12 +298,12 @@ public partial class SettingsWindow : Window
 
     private void BuildPopupModeCard(StackPanel stack)
     {
-        _tooltipMode = new RadioButton { Content = "Tooltip sencillo", FontSize = BodySize, GroupName = "PopupMode", IsChecked = Result.PopupMode == PopupMode.Tooltip, Margin = new Thickness(0, 0, 0, 12) };
-        _richMode = new RadioButton { Content = "Ventana flotante (recomendado)", FontSize = BodySize, GroupName = "PopupMode", IsChecked = Result.PopupMode == PopupMode.Rich, Margin = new Thickness(0, 0, 0, 20) };
+        _tooltipMode = new RadioButton { Content = Strings.T("popup.mode.tooltip"), FontSize = BodySize, GroupName = "PopupMode", IsChecked = Result.PopupMode == PopupMode.Tooltip, Margin = new Thickness(0, 0, 0, 12) };
+        _richMode = new RadioButton { Content = Strings.T("popup.mode.rich"), FontSize = BodySize, GroupName = "PopupMode", IsChecked = Result.PopupMode == PopupMode.Rich, Margin = new Thickness(0, 0, 0, 20) };
         stack.Children.Add(_tooltipMode);
         stack.Children.Add(_richMode);
 
-        stack.Children.Add(Hint("Mostrar panel al pasar el ratón por encima"));
+        stack.Children.Add(Hint(Strings.T("popup.mode.hoverhint")));
         var (row, buttons) = BuildSegmented(HoverDelayLabels, i => _selectedHoverDelay = HoverDelayValues[i], Array.IndexOf(HoverDelayValues, _selectedHoverDelay));
         Array.Copy(buttons, _hoverDelayButtons, buttons.Length);
         stack.Children.Add(row);
@@ -269,7 +323,7 @@ public partial class SettingsWindow : Window
         stack.Children.Add(row);
 
         stack.Children.Add(new Border { Height = 20 });
-        stack.Children.Add(Hint("Color de acento — \"Original\" colorea las barras del panel según el % de uso"));
+        stack.Children.Add(Hint(Strings.T("appearance.accent.hint")));
 
         var swatches = new UniformGrid { Columns = 6, Margin = new Thickness(0, 4, 0, 0) };
 
@@ -378,7 +432,7 @@ public partial class SettingsWindow : Window
         stack.Children.Add(BuildServiceRow("Grok", Result.ShowGrok, Result.NotifyResetGrok, out _showGrok, out _notifyResetGrok));
         stack.Children.Add(new Border { Height = 22 });
 
-        stack.Children.Add(BuildSwitchRow("Recibir notificación con sonido", "Se te notificará con sonido cuando se reinicie el uso", Result.NotifySoundEnabled, out _notifySound));
+        stack.Children.Add(BuildSwitchRow(Strings.T("service.sound.label"), Strings.T("service.sound.hint"), Result.NotifySoundEnabled, out _notifySound));
         UpdateSoundToggleAvailability();
         foreach (var t in new[] { _notifyResetClaude, _notifyResetChatGpt, _notifyResetGrok })
         {
@@ -431,11 +485,11 @@ public partial class SettingsWindow : Window
         FrameworkElement status;
         if (_isLoggedIn(providerName))
         {
-            status = new TextBlock { Text = "Sesión iniciada", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush };
+            status = new TextBlock { Text = Strings.T("service.loggedin"), FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush };
         }
         else
         {
-            var link = new Button { Content = "Vincular cuenta", Style = (Style)FindResource("LinkButton"), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(0) };
+            var link = new Button { Content = Strings.T("service.link"), Style = (Style)FindResource("LinkButton"), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(0) };
             link.Click += (s, e) => _triggerLogin(providerName);
             status = link;
         }
@@ -443,7 +497,7 @@ public partial class SettingsWindow : Window
         statusRow.Children.Add(status);
 
         var notifyToggleLocal = new ToggleButton { IsChecked = notifyReset, Style = (Style)FindResource("BellToggle"), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(2, 0, 0, 0) };
-        ToolTipService.SetToolTip(notifyToggleLocal, "Avisar cuando se reinicie el límite de uso");
+        ToolTipService.SetToolTip(notifyToggleLocal, Strings.T("service.notify.tooltip"));
         Grid.SetColumn(notifyToggleLocal, 1);
         statusRow.Children.Add(notifyToggleLocal);
         Grid.SetRow(statusRow, 1);
@@ -464,7 +518,7 @@ public partial class SettingsWindow : Window
 
     private void BuildTelegramCard(StackPanel stack)
     {
-        stack.Children.Add(BuildSwitchRow("Activar bot de Telegram", null, Result.TelegramEnabled, out _telegramEnabled));
+        stack.Children.Add(BuildSwitchRow(Strings.T("telegram.enable.label"), null, Result.TelegramEnabled, out _telegramEnabled));
 
         _telegramToken = new TextBox { Text = Result.TelegramBotToken ?? "", Style = (Style)FindResource("FlatTextBox"), Margin = new Thickness(0, 14, 0, 0) };
         stack.Children.Add(_telegramToken);
@@ -479,17 +533,17 @@ public partial class SettingsWindow : Window
         {
             var linked = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
             linked.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = SuccessBrush, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
-            linked.Children.Add(new TextBlock { Text = "Chat vinculado", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush });
+            linked.Children.Add(new TextBlock { Text = Strings.T("telegram.linked"), FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush });
             stack.Children.Add(linked);
-            stack.Children.Add(BulletPoint("Escríbele /uso al bot en cualquier momento para consultar tu consumo actual de todos los servicios activos, directamente desde Telegram."));
+            stack.Children.Add(BulletPoint(Strings.T("telegram.linked.hint")));
         }
         else
         {
-            stack.Children.Add(Hint("Para vincular el bot:"));
-            stack.Children.Add(BulletPoint("1. Abre Telegram y busca a @BotFather."));
-            stack.Children.Add(BulletPoint("2. Envíale /newbot y sigue los pasos para crear tu bot."));
-            stack.Children.Add(BulletPoint("3. Pega aquí el token que te entregue y guarda los ajustes."));
-            stack.Children.Add(BulletPoint("4. Escríbele /uso a tu nuevo bot para vincular el chat."));
+            stack.Children.Add(Hint(Strings.T("telegram.setup.title")));
+            stack.Children.Add(BulletPoint(Strings.T("telegram.setup.1")));
+            stack.Children.Add(BulletPoint(Strings.T("telegram.setup.2")));
+            stack.Children.Add(BulletPoint(Strings.T("telegram.setup.3")));
+            stack.Children.Add(BulletPoint(Strings.T("telegram.setup.4")));
         }
     }
 
@@ -521,10 +575,14 @@ public partial class SettingsWindow : Window
         return row;
     }
 
-    private void OnSaveClick(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Reads every control's current value into Result — the single source
+    /// of truth both OnSaveClick and a language-change rebuild use, so an
+    /// in-progress language switch never loses whatever else the user was
+    /// mid-editing.
+    /// </summary>
+    private void SnapshotIntoResult()
     {
-        AutoStartHelper.SetEnabled(_autoStart.IsChecked == true);
-
         var newToken = string.IsNullOrWhiteSpace(_telegramToken.Text) ? null : _telegramToken.Text.Trim();
         var tokenChanged = newToken != Result.TelegramBotToken;
 
@@ -546,7 +604,19 @@ public partial class SettingsWindow : Window
             TelegramEnabled = _telegramEnabled.IsChecked == true,
             TelegramBotToken = newToken,
             TelegramChatId = tokenChanged ? null : _telegramChatId,
+            Language = _selectedLanguage,
+            AutoCheckUpdates = _autoCheckUpdates.IsChecked == true,
+            // Not surfaced in the UI — carried forward so a save right
+            // after dismissing the update dialog with "Hoy no, mañana"
+            // doesn't wipe out that snooze.
+            UpdateSnoozeUntil = Result.UpdateSnoozeUntil,
         };
+    }
+
+    private void OnSaveClick(object sender, RoutedEventArgs e)
+    {
+        AutoStartHelper.SetEnabled(_autoStart.IsChecked == true);
+        SnapshotIntoResult();
         Saved = true;
         Close();
     }
@@ -561,7 +631,7 @@ public partial class SettingsWindow : Window
     {
         VersionButton.IsEnabled = false;
         var original = VersionButton.Content;
-        VersionButton.Content = "Buscando actualizaciones...";
+        VersionButton.Content = Strings.T("settings.version.checking");
         try
         {
             await UpdateService.CheckAndPromptAsync(manualCheck: true);

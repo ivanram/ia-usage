@@ -59,7 +59,7 @@ public sealed class TelegramBotService
                 var normalized = text.Trim();
                 if (normalized == "/start")
                 {
-                    await bot.SendMessage(chatId, "Pulsa el botón o escribe /uso para ver tu consumo.", replyMarkup: Keyboard, cancellationToken: innerCt);
+                    await bot.SendMessage(chatId, Strings.T("telegrambot.prompt"), replyMarkup: Keyboard, cancellationToken: innerCt);
                     return;
                 }
 
@@ -69,7 +69,7 @@ public sealed class TelegramBotService
                     return;
                 }
 
-                await bot.SendMessage(chatId, $"Usa el botón «{UsageButtonText}» o el comando /uso.", replyMarkup: Keyboard, cancellationToken: innerCt);
+                await bot.SendMessage(chatId, Strings.F("telegrambot.usebutton", UsageButtonText), replyMarkup: Keyboard, cancellationToken: innerCt);
             },
             (bot, exception, innerCt) => Task.CompletedTask,
             new ReceiverOptions { AllowedUpdates = new[] { UpdateType.Message } },
@@ -95,7 +95,7 @@ public sealed class TelegramBotService
             var emoji = ServiceEmoji.TryGetValue(snap.ServiceName, out var e) ? e : "🤖";
             var header = $"{emoji} *{snap.ServiceName}*";
 
-            if (!snap.Ok) return $"{header}\n{snap.ErrorMessage ?? "sin datos"}";
+            if (!snap.Ok) return $"{header}\n{snap.ErrorMessage ?? Strings.T("telegrambot.nodata")}";
 
             var lines = snap.Bars.Select(b =>
             {
@@ -107,7 +107,7 @@ public sealed class TelegramBotService
             return string.IsNullOrEmpty(snap.ExtraLine) ? text : $"{text}\n\n{snap.ExtraLine}";
         }).ToList();
 
-        return blocks.Count == 0 ? "No hay servicios activos todavía." : string.Join("\n\n━━━━━━━━━━━━━\n\n", blocks);
+        return blocks.Count == 0 ? Strings.T("telegrambot.none") : string.Join("\n\n━━━━━━━━━━━━━\n\n", blocks);
     }
 
     private static string AsciiBar(int percent, int slots = 10)

@@ -73,6 +73,8 @@
                 <StackPanel x:Name="ButtonRow" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
                     <Button x:Name="NoButton" Content="No" Width="100" Height="36" Margin="0,0,10,0"
                             Click="OnNoClick" Style="{StaticResource SecondaryDialogButton}" />
+                    <Button x:Name="LaterButton" Content="Hoy no, mañana" Width="130" Height="36" Margin="0,0,10,0"
+                            Visibility="Collapsed" Click="OnLaterClick" Style="{StaticResource SecondaryDialogButton}" />
                     <Button x:Name="YesButton" Content="Sí" Width="100" Height="36"
                             Click="OnYesClick" Style="{StaticResource PrimaryDialogButton}" />
                 </StackPanel>

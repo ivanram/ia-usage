@@ -40,6 +40,11 @@ public sealed class AppSettings
     public bool NotifyResetGrok { get; set; }
     public bool NotifySoundEnabled { get; set; }
 
+    public AppLanguage Language { get; set; } = AppLanguage.Spanish;
+    public bool AutoCheckUpdates { get; set; } = true;
+    /// <summary>Set by the "Hoy no, mañana" button on the update dialog — silent startup checks skip until this passes; a manual check always ignores it.</summary>
+    public DateTime? UpdateSnoozeUntil { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ClaudeUsageTray", "settings.json");

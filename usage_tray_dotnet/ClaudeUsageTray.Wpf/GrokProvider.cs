@@ -41,7 +41,7 @@ public sealed class GrokProvider : IUsageProvider
         var inner = await host.RunScriptForResultAsync(KickoffScript, PollExpression);
         if (inner is null)
         {
-            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = "Tiempo de espera agotado" };
+            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = Strings.T("provider.timeout") };
         }
 
         using var doc = JsonDocument.Parse(inner);
@@ -61,7 +61,7 @@ public sealed class GrokProvider : IUsageProvider
         // user had a chance to type anything).
         if (!await host.HasAuthCookieAsync(HomeUrl))
         {
-            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = "Inicia sesión en la ventana de Grok" };
+            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = Strings.T("provider.grok.loginneeded") };
         }
 
         var data = root.GetProperty("data");
@@ -82,7 +82,7 @@ public sealed class GrokProvider : IUsageProvider
         {
             ServiceName = Name,
             Ok = true,
-            Bars = new List<UsageBar> { new() { Label = "Límite de uso", Percent = percent, ResetAt = resetAt } },
+            Bars = new List<UsageBar> { new() { Label = Strings.T("provider.grok.usage"), Percent = percent, ResetAt = resetAt } },
         };
     }
 }

@@ -42,7 +42,7 @@ public sealed class ClaudeProvider : IUsageProvider
         var inner = await host.RunScriptForResultAsync(KickoffScript, PollExpression);
         if (inner is null)
         {
-            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = "Tiempo de espera agotado" };
+            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = Strings.T("provider.timeout") };
         }
 
         using var doc = JsonDocument.Parse(inner);
@@ -75,7 +75,7 @@ public sealed class ClaudeProvider : IUsageProvider
             && extra.TryGetProperty("used_credits", out var usedCredits) && usedCredits.ValueKind == JsonValueKind.Number)
         {
             var decimals = extra.TryGetProperty("decimal_places", out var dp) ? dp.GetInt32() : 2;
-            var currency = extra.TryGetProperty("currency", out var cur) ? cur.GetString() : "";
+            var currency = extra.TryGetProperty("currency", out var cur) ? cur.GetString() ?? "" : "";
             var used = usedCredits.GetDecimal() / (decimal)Math.Pow(10, decimals);
 
             decimal? total = null;
@@ -87,8 +87,8 @@ public sealed class ClaudeProvider : IUsageProvider
             }
 
             creditsLine = total is null
-                ? $"Créditos usados: {used:0.00} {currency}"
-                : $"Créditos usados: {used:0.00} / {total:0.00} {currency}";
+                ? Strings.F("provider.claude.credits.used", used, currency)
+                : Strings.F("provider.claude.credits.used_of", used, total, currency);
         }
 
         return new UsageSnapshot
@@ -97,8 +97,8 @@ public sealed class ClaudeProvider : IUsageProvider
             Ok = true,
             Bars =
             {
-                new UsageBar { Label = "Límite de 5 horas", Percent = fiveHour, ResetAt = fiveHourReset },
-                new UsageBar { Label = "Límite semanal", Percent = sevenDayPct, ResetAt = weeklyReset },
+                new UsageBar { Label = Strings.T("provider.claude.5h"), Percent = fiveHour, ResetAt = fiveHourReset },
+                new UsageBar { Label = Strings.T("provider.weekly"), Percent = sevenDayPct, ResetAt = weeklyReset },
             },
             ExtraLine = creditsLine,
         };

@@ -120,16 +120,26 @@ internal static class UpdateService
     /// startup checks (manualCheck: false) that find nothing newer just
     /// return — but a check the user explicitly asked for (clicking the
     /// version label in Settings) says so either way, since a silent
-    /// no-op there would just look broken.
+    /// no-op there would just look broken. A silent check also respects
+    /// the "buscar actualizaciones automáticamente" setting and any active
+    /// "Hoy no, mañana" snooze — a manual check always ignores both, since
+    /// clicking the version label is an explicit request no matter what.
     /// </summary>
     public static async Task CheckAndPromptAsync(bool manualCheck = false)
     {
         try
         {
+            var settings = AppSettings.Load();
+            if (!manualCheck)
+            {
+                if (!settings.AutoCheckUpdates) return;
+                if (settings.UpdateSnoozeUntil is { } snoozeUntil && DateTime.Now < snoozeUntil) return;
+            }
+
             var (version, downloadUrl) = await GetLatestReleaseAsync();
             if (version is null || downloadUrl is null)
             {
-                if (manualCheck) AppDialogWindow.ShowInfo("Uso de IA", "No se ha podido comprobar si hay actualizaciones.");
+                if (manualCheck) AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T("dialog.checkfailed.message"));
                 return;
             }
 
@@ -137,14 +147,21 @@ internal static class UpdateService
             Log($"current={current} latest={version}");
             if (!IsNewer(version, current))
             {
-                if (manualCheck) AppDialogWindow.ShowInfo("Uso de IA", "Ya tienes la última versión.");
+                if (manualCheck) AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T("dialog.uptodate.message"));
                 return;
             }
 
-            var accepted = AppDialogWindow.ShowYesNo(
-                "Actualización disponible",
-                $"Hay una nueva versión disponible (v{version.Major}.{version.Minor}.{version.Build}).\n¿Quieres actualizarla ahora?");
-            if (!accepted) return;
+            var choice = AppDialogWindow.ShowUpdatePrompt(
+                Strings.F("dialog.update.title", Strings.T("app.name")),
+                Strings.F("dialog.update.message", $"{version.Major}.{version.Minor}.{version.Build}"));
+
+            if (choice == DialogChoice.Later)
+            {
+                settings.UpdateSnoozeUntil = DateTime.Today.AddDays(1);
+                settings.Save();
+                return;
+            }
+            if (choice != DialogChoice.Yes) return;
 
             await DownloadAndApplyAsync(downloadUrl, version);
         }

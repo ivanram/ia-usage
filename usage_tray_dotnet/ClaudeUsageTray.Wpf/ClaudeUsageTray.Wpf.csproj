@@ -10,7 +10,7 @@
     <AssemblyName>ClaudeUsageTray</AssemblyName>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>1.3.2</Version>
+    <Version>1.4.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,6 +19,7 @@
     <Resource Include="Assets\telegram.png" />
     <Resource Include="Assets\grok.png" />
     <Resource Include="Assets\chime.wav" />
+    <Resource Include="Assets\sad_trombone.wav" />
   </ItemGroup>
 
   <ItemGroup>

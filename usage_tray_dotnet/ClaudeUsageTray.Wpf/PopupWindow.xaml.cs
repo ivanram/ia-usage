@@ -68,7 +68,7 @@ public partial class PopupWindow : Window
 
         if (!hasAnyEnabled)
         {
-            var msg = BuildEmptyMessage("No hay servicios activos. Ábrelos desde Ajustes.");
+            var msg = BuildEmptyMessage(Strings.T("popup.noservices"));
             msg.Width = contentWidth;
             ContentHost.Children.Add(msg);
         }
@@ -219,7 +219,7 @@ public partial class PopupWindow : Window
         {
             var err = new TextBlock
             {
-                Text = snap.ErrorMessage ?? "No se pudo leer el uso",
+                Text = snap.ErrorMessage ?? Strings.T("popup.error.generic"),
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 13,
             };
@@ -270,7 +270,7 @@ public partial class PopupWindow : Window
             var resetText = resetAt - DateTimeOffset.Now < TimeSpan.FromDays(1)
                 ? TimeFormat.ResetCountdown(resetAt)
                 : TimeFormat.ResetLine(resetAt);
-            var reset = new TextBlock { Text = $"Se reinicia {resetText}", FontSize = 11, Margin = new Thickness(0, 5, 0, 0), Foreground = _textSecondary };
+            var reset = new TextBlock { Text = Strings.F("popup.resets", resetText), FontSize = 11, Margin = new Thickness(0, 5, 0, 0), Foreground = _textSecondary };
             stack.Children.Add(reset);
         }
 
@@ -364,7 +364,7 @@ public partial class PopupWindow : Window
 
         var updated = new TextBlock
         {
-            Text = lastUpdated is { } t ? $"Actualizado {TimeFormat.Ago(t)}" : "",
+            Text = lastUpdated is { } t ? Strings.F("popup.updated", TimeFormat.Ago(t)) : "",
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = _textSecondary,
@@ -372,11 +372,11 @@ public partial class PopupWindow : Window
         Grid.SetColumn(updated, 0);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var (refreshButton, refreshGlyph) = BuildIconButtonWithGlyph(IconRefresh, "Actualizar", () => RefreshRequested?.Invoke(this, EventArgs.Empty));
+        var (refreshButton, refreshGlyph) = BuildIconButtonWithGlyph(IconRefresh, Strings.T("popup.tooltip.refresh"), () => RefreshRequested?.Invoke(this, EventArgs.Empty));
         _refreshButton = refreshButton;
         _refreshGlyph = refreshGlyph;
         buttons.Children.Add(refreshButton);
-        buttons.Children.Add(BuildIconButton(IconSettings, "Ajustes", () => SettingsRequested?.Invoke(this, EventArgs.Empty)));
+        buttons.Children.Add(BuildIconButton(IconSettings, Strings.T("popup.tooltip.settings"), () => SettingsRequested?.Invoke(this, EventArgs.Empty)));
         Grid.SetColumn(buttons, 1);
 
         row.Children.Add(updated);

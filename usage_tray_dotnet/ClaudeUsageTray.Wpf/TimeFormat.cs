@@ -5,36 +5,47 @@ namespace ClaudeUsageTray;
 internal static class TimeFormat
 {
     private static readonly CultureInfo Es = new("es-ES");
+    private static readonly CultureInfo En = new("en-US");
+    private static CultureInfo Culture => Strings.Current == AppLanguage.Spanish ? Es : En;
 
-    /// <summary>"el 5 de agosto (en 5 días)" / "el 5 de agosto (en 3 h)" / "ya disponible".</summary>
+    /// <summary>"el 5 de agosto (en 5 días)" / "August 5 (in 5 days)" / "ya disponible".</summary>
     public static string ResetLine(DateTimeOffset target)
     {
         var span = target - DateTimeOffset.Now;
-        if (span <= TimeSpan.Zero) return "ya disponible";
+        if (span <= TimeSpan.Zero) return Strings.T("time.available");
 
         var local = target.ToLocalTime();
-        var datePart = $"el {local.Day} de {local.ToString("MMMM", Es)}";
+        var month = local.ToString("MMMM", Culture);
+        var datePart = Strings.Current == AppLanguage.Spanish ? $"el {local.Day} de {month}" : $"{month} {local.Day}";
 
         string relativePart;
         if (span.TotalDays >= 1)
         {
-            var days = (int)span.TotalDays;
-            relativePart = $"en {days} día{(days == 1 ? "" : "s")}";
+            // Calendar-day difference, not raw span.TotalDays truncated —
+            // the date shown right next to this is a calendar date, so if
+            // today is the 1st and the target is the 3rd that reads as
+            // "2 days" regardless of what time of day it currently is, not
+            // "1 day" just because fewer than 48 raw hours remain.
+            var days = (local.Date - DateTimeOffset.Now.ToLocalTime().Date).Days;
+            relativePart = Strings.Current == AppLanguage.Spanish
+                ? $"en {days} día{(days == 1 ? "" : "s")}"
+                : $"in {days} day{(days == 1 ? "" : "s")}";
         }
         else if (span.TotalHours >= 1)
         {
-            relativePart = $"en {(int)span.TotalHours} h";
+            relativePart = Strings.Current == AppLanguage.Spanish ? $"en {(int)span.TotalHours} h" : $"in {(int)span.TotalHours} h";
         }
         else
         {
-            relativePart = $"en {Math.Max(1, (int)span.TotalMinutes)} min";
+            var mins = Math.Max(1, (int)span.TotalMinutes);
+            relativePart = Strings.Current == AppLanguage.Spanish ? $"en {mins} min" : $"in {mins} min";
         }
 
         return $"{datePart} ({relativePart})";
     }
 
     /// <summary>
-    /// "a las 3:00 am (en 1:55 horas)" / "a las 3:00 am (en 20 minutos)" /
+    /// "a las 3:00 am (en 1:55 horas)" / "at 3:00 am (in 1h 55m)" /
     /// "ya disponible" — precise clock time + countdown for short
     /// (same-day) reset windows, like Claude's rolling 5-hour limit. The
     /// calendar-style ResetLine ("el 5 de agosto (en 4 h)") reads fine
@@ -44,74 +55,54 @@ internal static class TimeFormat
     public static string ResetCountdown(DateTimeOffset target)
     {
         var span = target - DateTimeOffset.Now;
-        if (span <= TimeSpan.Zero) return "ya disponible";
+        if (span <= TimeSpan.Zero) return Strings.T("time.available");
 
         var local = target.ToLocalTime();
         var hour12 = local.Hour % 12;
         if (hour12 == 0) hour12 = 12;
         var ampm = local.Hour < 12 ? "am" : "pm";
-        var timePart = $"a las {hour12}:{local.Minute:D2} {ampm}";
+        var timePart = Strings.Current == AppLanguage.Spanish
+            ? $"a las {hour12}:{local.Minute:D2} {ampm}"
+            : $"at {hour12}:{local.Minute:D2} {ampm}";
 
         string relativePart;
         if (span.TotalHours >= 1)
         {
             var hours = (int)span.TotalHours;
             var minutes = span.Minutes;
-            relativePart = $"en {hours}:{minutes:D2} horas";
+            relativePart = Strings.Current == AppLanguage.Spanish
+                ? $"en {hours}:{minutes:D2} horas"
+                : $"in {hours}h {minutes}m";
         }
         else
         {
             var mins = Math.Max(1, (int)span.TotalMinutes);
-            relativePart = $"en {mins} minuto{(mins == 1 ? "" : "s")}";
+            relativePart = Strings.Current == AppLanguage.Spanish
+                ? $"en {mins} minuto{(mins == 1 ? "" : "s")}"
+                : $"in {mins} minute{(mins == 1 ? "" : "s")}";
         }
 
         return $"{timePart} ({relativePart})";
-    }
-
-    /// <summary>"faltan 3 días, 2 h" / "faltan 45 min" / "ya disponible".</summary>
-    public static string Relative(DateTimeOffset target)
-    {
-        var span = target - DateTimeOffset.Now;
-        if (span <= TimeSpan.Zero) return "ya disponible";
-
-        if (span.TotalDays >= 1)
-        {
-            var days = (int)span.TotalDays;
-            var hours = span.Hours;
-            return hours > 0
-                ? $"faltan {days} día{(days == 1 ? "" : "s")}, {hours} h"
-                : $"faltan {days} día{(days == 1 ? "" : "s")}";
-        }
-
-        if (span.TotalHours >= 1)
-        {
-            var hours = (int)span.TotalHours;
-            var minutes = span.Minutes;
-            return minutes > 0 ? $"faltan {hours} h, {minutes} min" : $"faltan {hours} h";
-        }
-
-        var mins = Math.Max(1, (int)span.TotalMinutes);
-        return $"faltan {mins} min";
     }
 
     /// <summary>Short form for tooltip/tray text: "3d 2h" / "45min".</summary>
     public static string RelativeShort(DateTimeOffset target)
     {
         var span = target - DateTimeOffset.Now;
-        if (span <= TimeSpan.Zero) return "ya";
+        if (span <= TimeSpan.Zero) return Strings.Current == AppLanguage.Spanish ? "ya" : "now";
         if (span.TotalDays >= 1) return $"{(int)span.TotalDays}d {span.Hours}h";
         if (span.TotalHours >= 1) return $"{(int)span.TotalHours}h {span.Minutes}min";
         return $"{Math.Max(1, (int)span.TotalMinutes)}min";
     }
 
-    /// <summary>"actualizado hace un momento" / "hace 3 min" / "hace 2 h".</summary>
+    /// <summary>"hace un momento" / "just now" / "3 min ago".</summary>
     public static string Ago(DateTime past)
     {
         var span = DateTime.Now - past;
-        if (span < TimeSpan.FromSeconds(30)) return "hace un momento";
-        if (span.TotalMinutes < 1) return "hace unos segundos";
-        if (span.TotalHours < 1) return $"hace {(int)span.TotalMinutes} min";
-        if (span.TotalDays < 1) return $"hace {(int)span.TotalHours} h";
-        return $"hace {(int)span.TotalDays} d";
+        if (span < TimeSpan.FromSeconds(30)) return Strings.T("time.ago.moment");
+        if (span.TotalMinutes < 1) return Strings.T("time.ago.seconds");
+        if (span.TotalHours < 1) return Strings.F("time.ago.minutes", (int)span.TotalMinutes);
+        if (span.TotalDays < 1) return Strings.F("time.ago.hours", (int)span.TotalHours);
+        return Strings.F("time.ago.days", (int)span.TotalDays);
     }
 }

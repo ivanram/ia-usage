@@ -38,7 +38,7 @@ public sealed class ChatGptProvider : IUsageProvider
         var inner = await host.RunScriptForResultAsync(KickoffScript, PollExpression);
         if (inner is null)
         {
-            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = "Tiempo de espera agotado" };
+            return new UsageSnapshot { ServiceName = Name, Ok = false, ErrorMessage = Strings.T("provider.timeout") };
         }
 
         using var doc = JsonDocument.Parse(inner);
@@ -52,15 +52,15 @@ public sealed class ChatGptProvider : IUsageProvider
         var rateLimit = usage.GetProperty("rate_limit");
         var bars = new List<UsageBar>();
 
-        AddWindowBar(bars, rateLimit, "primary_window", "Límite semanal");
-        AddWindowBar(bars, rateLimit, "secondary_window", "Límite corto");
+        AddWindowBar(bars, rateLimit, "primary_window", Strings.T("provider.weekly"));
+        AddWindowBar(bars, rateLimit, "secondary_window", Strings.T("provider.chatgpt.short"));
 
         string? creditsLine = null;
         if (usage.TryGetProperty("credits", out var credits) && credits.ValueKind == JsonValueKind.Object
             && credits.TryGetProperty("has_credits", out var hasCredits) && hasCredits.ValueKind == JsonValueKind.True
             && credits.TryGetProperty("balance", out var balance))
         {
-            creditsLine = $"Saldo de créditos: {balance.GetString()}";
+            creditsLine = Strings.F("provider.chatgpt.credits", balance.GetString() ?? "");
         }
 
         return new UsageSnapshot
