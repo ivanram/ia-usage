@@ -129,7 +129,7 @@ internal static class UpdateService
             var (version, downloadUrl) = await GetLatestReleaseAsync();
             if (version is null || downloadUrl is null)
             {
-                if (manualCheck) MessageBox.Show("No se ha podido comprobar si hay actualizaciones.", "Uso de IA", MessageBoxButton.OK, MessageBoxImage.Warning);
+                if (manualCheck) AppDialogWindow.ShowInfo("Uso de IA", "No se ha podido comprobar si hay actualizaciones.");
                 return;
             }
 
@@ -137,16 +137,14 @@ internal static class UpdateService
             Log($"current={current} latest={version}");
             if (!IsNewer(version, current))
             {
-                if (manualCheck) MessageBox.Show("Ya tienes la última versión.", "Uso de IA", MessageBoxButton.OK, MessageBoxImage.Information);
+                if (manualCheck) AppDialogWindow.ShowInfo("Uso de IA", "Ya tienes la última versión.");
                 return;
             }
 
-            var result = MessageBox.Show(
-                $"Hay una nueva versión disponible (v{version.Major}.{version.Minor}.{version.Build}).\n¿Quieres actualizarla ahora?",
+            var accepted = AppDialogWindow.ShowYesNo(
                 "Actualización disponible",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Information);
-            if (result != MessageBoxResult.Yes) return;
+                $"Hay una nueva versión disponible (v{version.Major}.{version.Minor}.{version.Build}).\n¿Quieres actualizarla ahora?");
+            if (!accepted) return;
 
             await DownloadAndApplyAsync(downloadUrl, version);
         }

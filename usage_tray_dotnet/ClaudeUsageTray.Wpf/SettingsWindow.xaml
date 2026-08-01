@@ -206,6 +206,8 @@
             <Setter Property="Padding" Value="10,8" />
             <Setter Property="FontSize" Value="14" />
             <Setter Property="Background" Value="{DynamicResource MaterialDesignPaper}" />
+            <Setter Property="Foreground" Value="{DynamicResource MaterialDesignBody}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource MaterialDesignBody}" />
             <Setter Property="BorderBrush" Value="{DynamicResource MaterialDesignDivider}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />

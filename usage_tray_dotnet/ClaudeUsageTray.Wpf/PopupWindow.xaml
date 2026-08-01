@@ -19,11 +19,45 @@
     corners still visible" on a window that's supposedly rounded.
     -->
     <Grid Margin="18">
-        <Border x:Name="RootBorder" CornerRadius="16">
+        <Border x:Name="RootBorder" CornerRadius="16" MouseLeftButtonDown="OnRootMouseLeftButtonDown">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black" />
             </Border.Effect>
-            <StackPanel x:Name="ContentHost" Margin="20" />
+            <Grid>
+                <StackPanel x:Name="ContentHost" Margin="20" />
+
+                <!--
+                Pinning stops the away-hide timer (see TrayOrchestrator) from
+                closing the panel, so it can be left open/moved around
+                instead of vanishing the moment the cursor leaves it.
+                -->
+                <ToggleButton x:Name="PinButton" Width="26" Height="26"
+                              HorizontalAlignment="Right" VerticalAlignment="Top"
+                              Margin="0,8,8,0" Cursor="Hand"
+                              Checked="OnPinToggled" Unchecked="OnPinToggled"
+                              ToolTip="Fijar panel (no se cerrará solo)">
+                    <ToggleButton.Template>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Border x:Name="Bg" CornerRadius="13" Background="Transparent">
+                                <TextBlock x:Name="Glyph" Text="&#128204;" FontSize="12"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bg" Property="Background" Value="#14808080" />
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="Glyph" Property="RenderTransform">
+                                        <Setter.Value>
+                                            <RotateTransform Angle="-40" CenterX="7" CenterY="7" />
+                                        </Setter.Value>
+                                    </Setter>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </ToggleButton.Template>
+                </ToggleButton>
+            </Grid>
         </Border>
     </Grid>
 </Window>

@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using MaterialDesignThemes.Wpf;
@@ -148,6 +149,50 @@ public partial class PopupWindow : Window
         _textSecondary = isDark
             ? new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xB8))
             : new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
+
+        UpdatePinGlyphColor();
+    }
+
+    private void UpdatePinGlyphColor()
+    {
+        // "Glyph" is named inside PinButton's ControlTemplate, so it lives
+        // in the template's own name scope — not reachable as a field, only
+        // via FindName on the applied template.
+        PinButton.ApplyTemplate();
+        if (PinButton.Template.FindName("Glyph", PinButton) is not TextBlock glyph) return;
+        glyph.Foreground = PinButton.IsChecked == true ? _textPrimary : _textSecondary;
+        glyph.Opacity = PinButton.IsChecked == true ? 1.0 : 0.45;
+    }
+
+    /// <summary>Whether the panel should stay open regardless of cursor position — see TrayOrchestrator's away-hide poll.</summary>
+    public bool IsPinned => PinButton.IsChecked == true;
+
+    private void OnPinToggled(object sender, RoutedEventArgs e) => UpdatePinGlyphColor();
+
+    /// <summary>
+    /// WindowStyle="None" means there's no native title bar to drag by, so
+    /// any empty area of the panel itself doubles as one. Buttons inside
+    /// (refresh, settings, pin, links) mark their own mouse-down handled,
+    /// so this never fights with actually clicking them.
+    /// </summary>
+    private void OnRootMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed) return;
+        try
+        {
+            DragMove();
+            // DragMove() blocks until the drag ends — the panel's bottom
+            // edge just moved, so the anchor AnimateToNewSize resizes
+            // against needs to move with it, or the next live data update
+            // would snap the panel back toward the old position.
+            _maxBottom = Top + ActualHeight;
+        }
+        catch (InvalidOperationException)
+        {
+            // DragMove() throws if called outside a genuine mouse-down
+            // gesture (e.g. a stray call while the button's already up) —
+            // harmless, just skip the drag.
+        }
     }
 
     private FrameworkElement BuildServiceBlock(UsageSnapshot snap)
@@ -393,6 +438,12 @@ public partial class PopupWindow : Window
 
     public void ShowNearCursor()
     {
+        // Every fresh open starts unpinned — this only runs when the panel
+        // wasn't already visible (see the IsVisible early-return in
+        // TrayOrchestrator's poll loop), so it never disturbs an
+        // already-open pinned panel.
+        PinButton.IsChecked = false;
+
         // Measure against the real content (not ActualWidth/Height, which
         // are stale/zero the first time — before the window has ever been
         // shown, SizeToContent hasn't resolved a real size yet). Using

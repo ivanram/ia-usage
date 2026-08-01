@@ -33,6 +33,13 @@ public partial class SettingsWindow : Window
     private int _selectedHoverDelay;
     private readonly Button[] _accentButtons = new Button[ThemeHelper.AccentSwatches.Length + 1];
     private string _selectedAccent;
+
+    // The "logged in" / "linked" green (#2E8B57) is a fine sea-green on a
+    // light background but nearly invisible on a dark one — resolved once
+    // at construction time (matches how the rest of this window snapshots
+    // dark/light rather than live-updating mid-session; see _selectedTheme).
+    private bool _isDark;
+    private Brush SuccessBrush => (Brush)new BrushConverter().ConvertFrom(_isDark ? "#5FD68A" : "#2E8B57")!;
     private ToggleButton _showClaude = null!;
     private ToggleButton _showChatGpt = null!;
     private ToggleButton _showGrok = null!;
@@ -67,6 +74,7 @@ public partial class SettingsWindow : Window
         Result = current;
         _telegramChatId = current.TelegramChatId;
         _selectedTheme = current.Theme;
+        _isDark = ThemeHelper.ResolveIsDark(current.Theme);
         _selectedHoverDelay = current.HoverDelaySeconds;
         _selectedAccent = current.AccentColor;
         _isLoggedIn = isLoggedIn;
@@ -417,7 +425,7 @@ public partial class SettingsWindow : Window
         FrameworkElement status;
         if (_isLoggedIn(providerName))
         {
-            status = new TextBlock { Text = "Sesión iniciada", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)new BrushConverter().ConvertFrom("#2E8B57")! };
+            status = new TextBlock { Text = "Sesión iniciada", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush };
         }
         else
         {
@@ -464,8 +472,8 @@ public partial class SettingsWindow : Window
         if (Result.TelegramChatId is not null)
         {
             var linked = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
-            linked.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = (Brush)new BrushConverter().ConvertFrom("#2E8B57")!, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
-            linked.Children.Add(new TextBlock { Text = "Chat vinculado", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)new BrushConverter().ConvertFrom("#2E8B57")! });
+            linked.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = SuccessBrush, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+            linked.Children.Add(new TextBlock { Text = "Chat vinculado", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush });
             stack.Children.Add(linked);
             stack.Children.Add(BulletPoint("Escríbele /uso al bot en cualquier momento para consultar tu consumo actual de todos los servicios activos, directamente desde Telegram."));
         }

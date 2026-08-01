@@ -8,6 +8,13 @@ internal static class ThemeHelper
     /// <summary>The literal color used for the app's UI accent (buttons, switches) when "Original" is selected.</summary>
     public const string OriginalSwatchColor = "#2E4372";
 
+    /// <summary>
+    /// The navy above reads as near-invisible on a dark background — same
+    /// hue family, but lighter and more saturated so it still pops once
+    /// the base theme flips to dark.
+    /// </summary>
+    public const string OriginalSwatchColorDark = "#7C97E0";
+
     public static readonly string[] AccentSwatches =
     {
         "#378ADD", "#7F77DD", "#1D9E75", "#D85A30", "#D4537E", "#639922",
@@ -24,13 +31,22 @@ internal static class ThemeHelper
         paletteHelper.SetTheme(palette);
     }
 
-    /// <summary>Applies the accent color app-wide (drives MaterialDesign.Brush.Primary and friends everywhere).</summary>
+    /// <summary>
+    /// Applies the accent color app-wide (drives MaterialDesign.Brush.Primary
+    /// and friends everywhere). Relies on Apply(theme) having already run
+    /// for this call — every call site does that in the same breath — so
+    /// the base theme it reads back here is current.
+    /// </summary>
     public static void ApplyAccent(string accentSetting)
     {
-        var hex = accentSetting == AppSettings.OriginalAccentSentinel ? OriginalSwatchColor : accentSetting;
-        var color = (Color)ColorConverter.ConvertFromString(hex);
         var paletteHelper = new PaletteHelper();
         var palette = paletteHelper.GetTheme();
+        var isDark = palette.GetBaseTheme() == BaseTheme.Dark;
+
+        var hex = accentSetting == AppSettings.OriginalAccentSentinel
+            ? (isDark ? OriginalSwatchColorDark : OriginalSwatchColor)
+            : accentSetting;
+        var color = (Color)ColorConverter.ConvertFromString(hex);
         palette.SetPrimaryColor(color);
         paletteHelper.SetTheme(palette);
     }

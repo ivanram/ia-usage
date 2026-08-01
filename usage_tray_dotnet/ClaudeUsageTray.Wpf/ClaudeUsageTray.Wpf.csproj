@@ -10,7 +10,7 @@
     <AssemblyName>ClaudeUsageTray</AssemblyName>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>1.2.3</Version>
+    <Version>1.3.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

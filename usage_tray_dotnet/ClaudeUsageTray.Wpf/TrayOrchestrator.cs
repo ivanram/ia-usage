@@ -2,6 +2,7 @@ using System.IO;
 using System.Media;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using H.NotifyIcon;
 
@@ -104,6 +105,14 @@ public sealed class TrayOrchestrator : IDisposable
 
         if (_popup.IsVisible)
         {
+            // Pinned panels never auto-hide, regardless of cursor position —
+            // that's the whole point of pinning one.
+            if (_popup.IsPinned)
+            {
+                _awayMs = 0;
+                return;
+            }
+
             // Auto-dismiss once the cursor has been away from both the icon
             // and the panel itself for a short grace period — long enough to
             // move the cursor from the icon up into the panel without it
@@ -196,19 +205,67 @@ public sealed class TrayOrchestrator : IDisposable
         _ => false,
     };
 
+    // Segoe MDL2 Assets glyphs, same font/codepoints the rest of the app
+    // already uses for its own icon buttons (PopupWindow's refresh/settings
+    // icons, SettingsWindow's card headers) — keeps the right-click menu
+    // from looking like a bare, un-styled default Windows menu.
+    private const string MenuIconRefresh = "";
+    private const string MenuIconSettings = "";
+    private const string MenuIconLogin = "";
+    private const string MenuIconExit = "";
+
+    private static TextBlock MenuGlyph(string glyph) => new()
+    {
+        Text = glyph,
+        FontFamily = new FontFamily("Segoe MDL2 Assets"),
+        FontSize = 14,
+        Foreground = (Brush)new BrushConverter().ConvertFrom("#888888")!,
+    };
+
+    /// <summary>
+    /// A plain default ContextMenu/MenuItem never picks up the app's own
+    /// dark/light theme (it's always the stock Windows menu look), which
+    /// reads as visually disconnected from the rest of the UI — this pins
+    /// its colors to the same MaterialDesign resources everything else
+    /// uses, so it actually follows Ajustes → Apariencia.
+    /// </summary>
+    private static void ApplyMenuTheme(ContextMenu menu)
+    {
+        menu.SetResourceReference(Control.BackgroundProperty, "MaterialDesignPaper");
+        menu.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
+        menu.BorderThickness = new Thickness(1);
+        menu.SetResourceReference(Control.BorderBrushProperty, "MaterialDesignDivider");
+
+        var itemStyle = new Style(typeof(MenuItem));
+        itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 7, 14, 7)));
+        itemStyle.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 32.0));
+        menu.ItemContainerStyle = itemStyle;
+
+        foreach (var item in menu.Items.OfType<MenuItem>())
+        {
+            item.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
+            item.Style = itemStyle;
+            foreach (var sub in item.Items.OfType<MenuItem>())
+            {
+                sub.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
+                sub.Style = itemStyle;
+            }
+        }
+    }
+
     private ContextMenu BuildContextMenu()
     {
         var menu = new ContextMenu();
 
-        var refreshItem = new MenuItem { Header = "Actualizar ahora" };
+        var refreshItem = new MenuItem { Header = "Actualizar ahora", Icon = MenuGlyph(MenuIconRefresh) };
         refreshItem.Click += async (s, e) => await RefreshAllAsync();
         menu.Items.Add(refreshItem);
 
-        var settingsItem = new MenuItem { Header = "Ajustes..." };
+        var settingsItem = new MenuItem { Header = "Ajustes...", Icon = MenuGlyph(MenuIconSettings) };
         settingsItem.Click += (s, e) => OpenSettings();
         menu.Items.Add(settingsItem);
 
-        var loginMenu = new MenuItem { Header = "Iniciar sesión" };
+        var loginMenu = new MenuItem { Header = "Iniciar sesión", Icon = MenuGlyph(MenuIconLogin) };
         foreach (var provider in _providers.Where(p => p.SupportsLogin))
         {
             var item = new MenuItem { Header = provider.Name };
@@ -219,10 +276,11 @@ public sealed class TrayOrchestrator : IDisposable
 
         menu.Items.Add(new Separator());
 
-        var exitItem = new MenuItem { Header = "Salir" };
+        var exitItem = new MenuItem { Header = "Salir", Icon = MenuGlyph(MenuIconExit) };
         exitItem.Click += (s, e) => ExitApp();
         menu.Items.Add(exitItem);
 
+        ApplyMenuTheme(menu);
         return menu;
     }
 

@@ -53,7 +53,26 @@ internal static class NativeScreenHelper
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern int Shell_NotifyIconGetRect(ref NOTIFYICONIDENTIFIER identifier, out RECT iconLocation);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LASTINPUTINFO
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
     private const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    /// <summary>Seconds since the last keyboard/mouse input anywhere on the system.</summary>
+    public static double GetIdleSeconds()
+    {
+        var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>() };
+        if (!GetLastInputInfo(ref info)) return 0;
+        var idleMs = (uint)Environment.TickCount - info.dwTime;
+        return idleMs / 1000.0;
+    }
 
     public static POINT GetCursorPosition()
     {
