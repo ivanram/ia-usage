@@ -115,6 +115,14 @@ internal static class UpdateService
         catch { /* a leftover temp exe is harmless */ }
     }
 
+    // "1 vez por hora como máximo" for the silent startup check — plenty
+    // often enough to notice a new release without adding to GitHub's
+    // unauthenticated rate limit. The manual button gets its own much
+    // shorter cooldown purely as an anti-spam-click guard, not a real
+    // throttle — a deliberate click is still answered within seconds.
+    private static readonly TimeSpan AutoCheckMinInterval = TimeSpan.FromHours(1);
+    private static readonly TimeSpan ManualCheckMinInterval = TimeSpan.FromSeconds(20);
+
     /// <summary>
     /// Checks once, and if a newer release exists, asks the user. Silent
     /// startup checks (manualCheck: false) that find nothing newer just
@@ -124,6 +132,9 @@ internal static class UpdateService
     /// the "buscar actualizaciones automáticamente" setting and any active
     /// "Hoy no, mañana" snooze — a manual check always ignores both, since
     /// clicking the version label is an explicit request no matter what.
+    /// Both kinds are throttled against LastUpdateCheckAt (persisted, so it
+    /// survives an app restart) so neither a busy startup/shutdown cycle
+    /// nor mashing the version label can spam GitHub's API.
     /// </summary>
     public static async Task CheckAndPromptAsync(bool manualCheck = false)
     {
@@ -135,6 +146,21 @@ internal static class UpdateService
                 if (!settings.AutoCheckUpdates) return;
                 if (settings.UpdateSnoozeUntil is { } snoozeUntil && DateTime.Now < snoozeUntil) return;
             }
+
+            var minInterval = manualCheck ? ManualCheckMinInterval : AutoCheckMinInterval;
+            if (settings.LastUpdateCheckAt is { } lastCheck && DateTime.Now - lastCheck < minInterval)
+            {
+                Log($"CheckAndPromptAsync: throttled, {(DateTime.Now - lastCheck).TotalSeconds:0}s since last check (min {minInterval.TotalSeconds:0}s)");
+                if (manualCheck) AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T("dialog.toosoon.message"));
+                return;
+            }
+
+            // Recorded before the actual request — a failed/rate-limited
+            // attempt still counts as "just checked" so a burst of retries
+            // during an outage doesn't itself become the thing exhausting
+            // the rate limit.
+            settings.LastUpdateCheckAt = DateTime.Now;
+            settings.Save();
 
             var (version, downloadUrl, rateLimited) = await GetLatestReleaseAsync();
             if (version is null || downloadUrl is null)

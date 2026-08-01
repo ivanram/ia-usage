@@ -610,6 +610,7 @@ public partial class SettingsWindow : Window
             // after dismissing the update dialog with "Hoy no, mañana"
             // doesn't wipe out that snooze.
             UpdateSnoozeUntil = Result.UpdateSnoozeUntil,
+            LastUpdateCheckAt = Result.LastUpdateCheckAt,
         };
     }
 

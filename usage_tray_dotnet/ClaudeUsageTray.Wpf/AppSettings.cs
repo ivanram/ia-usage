@@ -44,6 +44,8 @@ public sealed class AppSettings
     public bool AutoCheckUpdates { get; set; } = true;
     /// <summary>Set by the "Hoy no, mañana" button on the update dialog — silent startup checks skip until this passes; a manual check always ignores it.</summary>
     public DateTime? UpdateSnoozeUntil { get; set; }
+    /// <summary>When the app last actually queried GitHub for a release, successful or not — see UpdateService's throttling.</summary>
+    public DateTime? LastUpdateCheckAt { get; set; }
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
