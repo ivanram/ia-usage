@@ -431,11 +431,22 @@ public sealed class TrayOrchestrator : IDisposable
         if (_popup.IsVisible) _popup.SetRefreshing(true);
         try
         {
-            foreach (var provider in enabled)
+            // Fetched in parallel rather than one provider at a time — each
+            // host creation + page load is I/O-bound (WebView2 navigating a
+            // real site out-of-process), so kicking all of them off at once
+            // lets their waits overlap in wall-clock time instead of adding
+            // up. This is what actually matters for the very first refresh
+            // right after launch: with three services fetched sequentially,
+            // the last one wouldn't have data for as long as it took all
+            // three combined.
+            var pending = enabled.ToDictionary(p => p, FetchOneAsync);
+            while (pending.Count > 0)
             {
-                var host = await EnsureHostAsync(provider);
-                Log($"[{provider.Name}] fetching with retry...");
-                var snap = await FetchWithRetryAsync(provider, host);
+                var finishedTask = await Task.WhenAny(pending.Values);
+                var provider = pending.First(kv => kv.Value == finishedTask).Key;
+                pending.Remove(provider);
+                var (host, snap) = await finishedTask;
+
                 Log($"[{provider.Name}] fetch result Ok={snap.Ok} Error={snap.ErrorMessage}");
                 if (snap.Ok) CheckForReset(provider.Name, snap);
                 _lastSnapshots[provider.Name] = snap;
@@ -469,6 +480,14 @@ public sealed class TrayOrchestrator : IDisposable
         {
             if (_popup.IsVisible) _popup.SetRefreshing(false);
         }
+    }
+
+    private async Task<(WebViewUsageHost Host, UsageSnapshot Snap)> FetchOneAsync(IUsageProvider provider)
+    {
+        var host = await EnsureHostAsync(provider);
+        Log($"[{provider.Name}] fetching with retry...");
+        var snap = await FetchWithRetryAsync(provider, host);
+        return (host, snap);
     }
 
     /// <summary>
