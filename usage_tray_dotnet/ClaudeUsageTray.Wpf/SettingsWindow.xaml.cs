@@ -34,12 +34,6 @@ public partial class SettingsWindow : Window
     private readonly Button[] _accentButtons = new Button[ThemeHelper.AccentSwatches.Length + 1];
     private string _selectedAccent;
 
-    // The "logged in" / "linked" green (#2E8B57) is a fine sea-green on a
-    // light background but nearly invisible on a dark one — resolved once
-    // at construction time (matches how the rest of this window snapshots
-    // dark/light rather than live-updating mid-session; see _selectedTheme).
-    private bool _isDark;
-    private Brush SuccessBrush => (Brush)new BrushConverter().ConvertFrom(_isDark ? "#5FD68A" : "#2E8B57")!;
     private ToggleButton _showClaude = null!;
     private ToggleButton _showChatGpt = null!;
     private ToggleButton _showGrok = null!;
@@ -74,7 +68,6 @@ public partial class SettingsWindow : Window
         Result = current;
         _telegramChatId = current.TelegramChatId;
         _selectedTheme = current.Theme;
-        _isDark = ThemeHelper.ResolveIsDark(current.Theme);
         _selectedHoverDelay = current.HoverDelaySeconds;
         _selectedAccent = current.AccentColor;
         _isLoggedIn = isLoggedIn;
@@ -145,15 +138,16 @@ public partial class SettingsWindow : Window
     {
         var badge = new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(10) };
         badge.SetResourceReference(Border.BackgroundProperty, "MaterialDesign.Brush.Primary");
-        badge.Child = new TextBlock
+        var text = new TextBlock
         {
             Text = "AI",
             FontSize = 9,
             FontWeight = FontWeights.Bold,
-            Foreground = Brushes.White,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        text.SetResourceReference(TextBlock.ForegroundProperty, "MaterialDesign.Brush.Primary.Foreground");
+        badge.Child = text;
         return badge;
     }
 
@@ -317,6 +311,11 @@ public partial class SettingsWindow : Window
         _selectedTheme = (AppTheme)index;
         StyleSegmented(_themeButtons, index);
         _previewTheme(_selectedTheme);
+        // The "Original" accent has separate light/dark variants (see
+        // ThemeHelper.ApplyAccent) — re-applying here picks up the right
+        // one now that the base theme just changed, instead of leaving
+        // whichever variant was set for the previous base theme.
+        ThemeHelper.ApplyAccent(_selectedAccent);
         DwmHelper.SetTitleBarDarkMode(new WindowInteropHelper(this).Handle, ThemeHelper.ResolveIsDark(_selectedTheme));
     }
 
@@ -425,7 +424,7 @@ public partial class SettingsWindow : Window
         FrameworkElement status;
         if (_isLoggedIn(providerName))
         {
-            status = new TextBlock { Text = "Sesión iniciada", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush };
+            status = SuccessBadge("Sesión iniciada");
         }
         else
         {
@@ -456,6 +455,20 @@ public partial class SettingsWindow : Window
         return row;
     }
 
+    // A fixed green fill + white text (rather than green text on the
+    // card's own background) reads fine in both light and dark mode —
+    // plain green text was too low-contrast against a light card no
+    // matter which shade of green got picked.
+    private static Border SuccessBadge(string text) => new()
+    {
+        Background = (Brush)new BrushConverter().ConvertFrom("#2E8B57")!,
+        CornerRadius = new CornerRadius(9),
+        Padding = new Thickness(9, 3, 9, 3),
+        HorizontalAlignment = HorizontalAlignment.Left,
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = new TextBlock { Text = text, FontSize = CaptionSize, Foreground = Brushes.White },
+    };
+
     private void BuildTelegramCard(StackPanel stack)
     {
         stack.Children.Add(BuildSwitchRow("Activar bot de Telegram", null, Result.TelegramEnabled, out _telegramEnabled));
@@ -471,9 +484,8 @@ public partial class SettingsWindow : Window
 
         if (Result.TelegramChatId is not null)
         {
-            var linked = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
-            linked.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = SuccessBrush, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
-            linked.Children.Add(new TextBlock { Text = "Chat vinculado", FontSize = CaptionSize, VerticalAlignment = VerticalAlignment.Center, Foreground = SuccessBrush });
+            var linked = SuccessBadge("Chat vinculado");
+            linked.Margin = new Thickness(0, 0, 0, 10);
             stack.Children.Add(linked);
             stack.Children.Add(BulletPoint("Escríbele /uso al bot en cualquier momento para consultar tu consumo actual de todos los servicios activos, directamente desde Telegram."));
         }
