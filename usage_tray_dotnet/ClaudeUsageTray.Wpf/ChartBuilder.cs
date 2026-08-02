@@ -468,6 +468,24 @@ internal static class ChartBuilder
         ["ChatGPT"] = "Codex",
     };
 
+    /// <summary>
+    /// Sums deltas that fall in the same LOCAL clock hour into one bucket
+    /// (timestamped at that hour's start) — a handful of raw 1/1/1/1 ticks
+    /// reads as noise, one "4 this hour" bar reads as a number. Local time
+    /// (not UTC) so bucket boundaries land where a human actually expects
+    /// "this hour" to start.
+    /// </summary>
+    private static List<(DateTimeOffset At, int Delta)> GroupDeltasByHour(List<(DateTimeOffset At, int Delta)> series) =>
+        series
+            .GroupBy(p =>
+            {
+                var local = p.At.ToLocalTime();
+                return new DateTimeOffset(local.Year, local.Month, local.Day, local.Hour, 0, 0, local.Offset);
+            })
+            .Select(g => (At: g.Key, Delta: g.Sum(p => p.Delta)))
+            .OrderBy(p => p.At)
+            .ToList();
+
     public static StackPanel BuildServiceBlocks(
         IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
         double chartWidth, double chartHeight,
@@ -494,9 +512,16 @@ internal static class ChartBuilder
             List<(DateTimeOffset At, int Delta)>? promptSeries = null;
             if (promptCountStore is not null && CodingAgentByService.TryGetValue(serviceName, out var agent))
             {
+                // "Totales" is a running cumulative line — stays raw, point
+                // for point. "Nuevos" deltas get grouped into one bar per
+                // clock hour: at a 60-minute sampling cadence that's mostly
+                // one tick per bucket already, but bucketing here (rather
+                // than trusting the cadence alone) also smooths over any
+                // older, denser 30-minute-interval history and any samples
+                // clustered close together from an app restart.
                 promptSeries = useTotalPrompts
                     ? promptCountStore.GetAgentTotalSeries(agent, since).Select(p => (p.At, p.Total)).ToList()
-                    : promptCountStore.GetAgentDeltaSeries(agent, since);
+                    : GroupDeltasByHour(promptCountStore.GetAgentDeltaSeries(agent, since));
             }
             // "Totales" reads naturally as a running line (see Build's own
             // reasoning); "Nuevos" per-interval deltas read naturally as

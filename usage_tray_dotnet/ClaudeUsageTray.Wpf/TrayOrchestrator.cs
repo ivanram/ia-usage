@@ -44,7 +44,13 @@ public sealed class TrayOrchestrator : IDisposable
     private readonly TelegramBotService _telegram;
     private readonly UsageHistoryStore _historyStore = new();
     private readonly PromptCountStore _promptCountStore = new();
-    private readonly DispatcherTimer _promptCountTimer = new() { Interval = TimeSpan.FromMinutes(30) };
+    private readonly DispatcherTimer _promptCountTimer = new() { Interval = TimeSpan.FromMinutes(60) };
+    // Slightly under the timer's own 60-minute cadence so normal jitter
+    // never blocks a legitimate tick, while still catching the case that
+    // actually matters: the app being closed and reopened a few times
+    // within the same hour, which would otherwise cluster several
+    // near-duplicate full-transcript scans together.
+    private static readonly TimeSpan MinPromptSampleInterval = TimeSpan.FromMinutes(55);
     private StatsWindow? _statsWindow;
     private AppSettings _settings = AppSettings.Load();
 
@@ -464,6 +470,12 @@ public sealed class TrayOrchestrator : IDisposable
     {
         try
         {
+            if (!_promptCountStore.ShouldSampleNow(MinPromptSampleInterval))
+            {
+                Log("SamplePromptCountsAsync: skipped, sampled recently");
+                return;
+            }
+
             var now = DateTimeOffset.UtcNow;
             var (claudeCodeCounts, codexCounts) = await Task.Run(() =>
                 (ClaudeCodeProjectsHelper.GetPromptCountsByProject(), CodexProjectsHelper.GetPromptCountsByProject()));

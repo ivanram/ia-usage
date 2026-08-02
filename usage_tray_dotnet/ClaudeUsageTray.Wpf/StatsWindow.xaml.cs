@@ -386,6 +386,14 @@ public partial class StatsWindow : Window
             ? new SolidColorBrush(Color.FromRgb(0x45, 0x45, 0x48))
             : new SolidColorBrush(Color.FromRgb(0xE2, 0xE2, 0xE2));
 
+        // A subtly cooler/lighter gray than the regular card background —
+        // just enough to tell the always-on Totales cards apart from the
+        // active-tab-scoped ones at a glance, without introducing a whole
+        // new color into the window.
+        var totalsCardBackground = isDark
+            ? new SolidColorBrush(Color.FromRgb(0x4C, 0x4C, 0x56))
+            : new SolidColorBrush(Color.FromRgb(0xE6, 0xE6, 0xEF));
+
         var accent = (Brush)FindResource("MaterialDesign.Brush.Primary");
         var fillBrush = accent.Clone();
         fillBrush.Opacity = 0.16;
@@ -412,7 +420,7 @@ public partial class StatsWindow : Window
         BuildPromptModeSelector(textSecondary, promptLineBrush);
 
         var since = SinceForRange(_range);
-        var dashboard = BuildDashboardRow(textPrimary, textSecondary, gridBrush, since);
+        var dashboard = BuildDashboardRow(textPrimary, textSecondary, gridBrush, totalsCardBackground, since);
         var dashboardHeight = 0.0;
         if (dashboard is not null)
         {
@@ -487,7 +495,7 @@ public partial class StatsWindow : Window
     /// scope; returns null when nothing qualifies at all, so Render() can
     /// skip adding an empty row.
     /// </summary>
-    private FrameworkElement? BuildDashboardRow(Brush textPrimary, Brush textSecondary, Brush cardBackground, DateTimeOffset since)
+    private FrameworkElement? BuildDashboardRow(Brush textPrimary, Brush textSecondary, Brush cardBackground, Brush totalsCardBackground, DateTimeOffset since)
     {
         var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
         var totalsLabel = Strings.T("stats.dashboard.totals.badge");
@@ -511,7 +519,7 @@ public partial class StatsWindow : Window
             // not a delta sum.
             var totalPromptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
             if (!(totalPromptCount == 0 && totalProjectCount == 0 && totalTaskCount == 0))
-                wrap.Children.Add(BuildDashboardCard(agent, totalsLabel, totalPromptCount, totalProjectCount, totalTaskCount, textPrimary, textSecondary, cardBackground));
+                wrap.Children.Add(BuildDashboardCard(agent, totalsLabel, totalPromptCount, totalProjectCount, totalTaskCount, textPrimary, textSecondary, totalsCardBackground));
 
             var inRange = tasks.Where(t => t.LastActivity >= since).ToList();
             var rangeProjectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();

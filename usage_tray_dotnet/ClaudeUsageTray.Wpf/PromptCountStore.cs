@@ -82,6 +82,34 @@ public sealed class PromptCountStore
         }
     }
 
+    /// <summary>
+    /// True if no sample has ever been recorded, or the most recent one
+    /// (across every agent — one shared cadence, not per-agent) is already
+    /// older than <paramref name="minInterval"/>. Each sample is a real
+    /// full-transcript disk scan, so this guards against the app being
+    /// closed and reopened a few times inside the same hour clustering
+    /// several near-duplicate samples together instead of the one-per-hour
+    /// cadence the sampling timer is meant to keep.
+    /// </summary>
+    public bool ShouldSampleNow(TimeSpan minInterval)
+    {
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT MAX(recorded_at) FROM prompt_counts";
+            var result = cmd.ExecuteScalar();
+            if (result is null or DBNull) return true;
+            var last = DateTimeOffset.Parse((string)result);
+            return DateTimeOffset.UtcNow - last >= minInterval;
+        }
+        catch
+        {
+            return true; // Best effort — err toward sampling rather than silently never sampling again.
+        }
+    }
+
     /// <summary>The latest known cumulative total per project — what /proyectos shows, refreshed at most every sampling tick.</summary>
     public Dictionary<string, int> GetLatestTotalsByProject(string agent)
     {
