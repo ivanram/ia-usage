@@ -408,18 +408,23 @@ public partial class StatsWindow : Window
         BuildPromptModeSelector(textSecondary, promptLineBrush);
 
         var since = SinceForRange(_range);
-        var dashboard = BuildDashboard(textPrimary, textSecondary, gridBrush, since);
+        // Totals first — always visible, independent of the active tab —
+        // then the range-scoped breakdown right below it.
+        var totalsDashboard = BuildTotalsDashboard(textPrimary, textSecondary, gridBrush);
+        var rangeDashboard = BuildDashboard(textPrimary, textSecondary, gridBrush, since);
+        if (totalsDashboard is not null) ContentHost.Children.Add(totalsDashboard);
+        if (rangeDashboard is not null) ContentHost.Children.Add(rangeDashboard);
+
         var dashboardHeight = 0.0;
-        if (dashboard is not null)
+        if (totalsDashboard is not null || rangeDashboard is not null)
         {
-            ContentHost.Children.Add(dashboard);
-            // Force a layout pass now so its real height is known before
+            // Force a layout pass now so their real height is known before
             // the chart-height budget below is computed — otherwise the
-            // dashboard's own space wouldn't be accounted for and charts
+            // dashboards' own space wouldn't be accounted for and charts
             // could overflow the viewport again, right back to the
             // scrollbar this whole responsive-sizing pass was meant to fix.
             ContentHost.UpdateLayout();
-            dashboardHeight = dashboard.ActualHeight;
+            dashboardHeight = (totalsDashboard?.ActualHeight ?? 0) + (rangeDashboard?.ActualHeight ?? 0);
         }
 
         if (_serviceNames.Count == 0)
@@ -464,6 +469,13 @@ public partial class StatsWindow : Window
     // Code first since this app started as a Claude-focused tool.
     private static readonly string[] DashboardAgents = { "Claude Code", "Codex" };
 
+    private static List<AgentTask> GetAgentTasks(string agent) => agent switch
+    {
+        "Claude Code" => ClaudeCodeProjectsHelper.GetRecentTasks(2000),
+        "Codex" => CodexProjectsHelper.GetRecentTasks(2000),
+        _ => new List<AgentTask>(),
+    };
+
     /// <summary>
     /// One compact card per coding agent that has any activity in range:
     /// new prompts (from PromptCountStore), distinct projects touched, and
@@ -475,48 +487,94 @@ public partial class StatsWindow : Window
     /// </summary>
     private FrameworkElement? BuildDashboard(Brush textPrimary, Brush textSecondary, Brush cardBackground, DateTimeOffset since)
     {
-        var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        var wrap = new WrapPanel();
 
         foreach (var agent in DashboardAgents)
         {
-            var tasks = agent switch
-            {
-                "Claude Code" => ClaudeCodeProjectsHelper.GetRecentTasks(2000),
-                "Codex" => CodexProjectsHelper.GetRecentTasks(2000),
-                _ => new List<AgentTask>(),
-            };
+            var tasks = GetAgentTasks(agent);
             var inRange = tasks.Where(t => t.LastActivity >= since).ToList();
             var projectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var taskCount = inRange.Count;
             var promptCount = _promptCountStore.GetAgentTotalInRange(agent, since);
 
             if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
-
-            var stack = new StackPanel();
-            stack.Children.Add(new TextBlock
-            {
-                Text = AgentDisplayNames.For(agent),
-                FontSize = 12,
-                FontWeight = FontWeights.Medium,
-                Foreground = textPrimary,
-                Margin = new Thickness(0, 0, 0, 6),
-            });
-            stack.Children.Add(BuildDashboardStatLine("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
-            stack.Children.Add(BuildDashboardStatLine("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
-            stack.Children.Add(BuildDashboardStatLine("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary));
-
-            wrap.Children.Add(new Border
-            {
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(14, 10, 14, 10),
-                Margin = new Thickness(0, 0, 10, 10),
-                MinWidth = 150,
-                Background = cardBackground,
-                Child = stack,
-            });
+            wrap.Children.Add(BuildDashboardCard(agent, promptCount, projectCount, taskCount, textPrimary, textSecondary, cardBackground));
         }
 
-        return wrap.Children.Count > 0 ? wrap : null;
+        return WrapDashboardSection("stats.dashboard.range.title", wrap, textSecondary);
+    }
+
+    /// <summary>
+    /// Same per-agent cards as <see cref="BuildDashboard"/>, but ALWAYS the
+    /// full-history figures regardless of the active Hoy/Semana/Mes tab —
+    /// requested explicitly so there's a stable "how much have I used this,
+    /// total" reference that doesn't change when switching ranges. Prompts
+    /// come from the latest known cumulative total per project (each
+    /// snapshot already holds a full-transcript scan, so the latest one IS
+    /// the all-time total — see PromptCountStore/GetPromptCountsByProject),
+    /// not a delta sum. Projects/tasks reuse the same uncapped recent-tasks
+    /// list as BuildDashboard, just without the `since` filter.
+    /// </summary>
+    private FrameworkElement? BuildTotalsDashboard(Brush textPrimary, Brush textSecondary, Brush cardBackground)
+    {
+        var wrap = new WrapPanel();
+
+        foreach (var agent in DashboardAgents)
+        {
+            var tasks = GetAgentTasks(agent);
+            var projectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var taskCount = tasks.Count;
+            var promptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
+
+            if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
+            wrap.Children.Add(BuildDashboardCard(agent, promptCount, projectCount, taskCount, textPrimary, textSecondary, cardBackground));
+        }
+
+        return WrapDashboardSection("stats.dashboard.totals.title", wrap, textSecondary);
+    }
+
+    private static FrameworkElement? WrapDashboardSection(string titleKey, WrapPanel wrap, Brush textSecondary)
+    {
+        if (wrap.Children.Count == 0) return null;
+
+        var section = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+        section.Children.Add(new TextBlock
+        {
+            Text = Strings.T(titleKey),
+            FontSize = 11,
+            FontWeight = FontWeights.Medium,
+            Foreground = textSecondary,
+            Margin = new Thickness(2, 0, 0, 6),
+        });
+        section.Children.Add(wrap);
+        return section;
+    }
+
+    private static Border BuildDashboardCard(string agent, int promptCount, int projectCount, int taskCount,
+        Brush textPrimary, Brush textSecondary, Brush cardBackground)
+    {
+        var stack = new StackPanel();
+        stack.Children.Add(new TextBlock
+        {
+            Text = AgentDisplayNames.For(agent),
+            FontSize = 12,
+            FontWeight = FontWeights.Medium,
+            Foreground = textPrimary,
+            Margin = new Thickness(0, 0, 0, 6),
+        });
+        stack.Children.Add(BuildDashboardStatLine("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
+        stack.Children.Add(BuildDashboardStatLine("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
+        stack.Children.Add(BuildDashboardStatLine("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary));
+
+        return new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(14, 10, 14, 10),
+            Margin = new Thickness(0, 0, 10, 10),
+            MinWidth = 150,
+            Background = cardBackground,
+            Child = stack,
+        };
     }
 
     private static FrameworkElement BuildDashboardStatLine(string glyph, string text, Brush foreground)

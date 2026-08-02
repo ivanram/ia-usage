@@ -136,15 +136,16 @@ public sealed class TelegramBotService
                 {
                     var snapshots = _getSnapshots().Where(s => s.Ok).ToList();
                     var image = BuildStatsImage(snapshots.Select(s => s.ServiceName).ToList());
+                    var caption = BuildStatsCaption(snapshots);
                     if (image is null)
                     {
-                        await bot.SendMessage(chatId, Strings.T("stats.noservices"), replyMarkup: Keyboard, cancellationToken: innerCt);
+                        await bot.SendMessage(chatId, caption, parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
                     }
                     else
                     {
                         using var stream = new MemoryStream(image);
                         await bot.SendPhoto(chatId, InputFile.FromStream(stream, "stats.png"),
-                            caption: BuildReply(snapshots), parseMode: ParseMode.Markdown,
+                            caption: caption, parseMode: ParseMode.Markdown,
                             replyMarkup: Keyboard, cancellationToken: innerCt);
                     }
                     return;
@@ -429,6 +430,52 @@ public sealed class TelegramBotService
             encoder.Save(ms);
             return ms.ToArray();
         });
+    }
+
+    /// <summary>
+    /// /stats used to just be the usage chart's own caption (subscription
+    /// percentages) — this appends the same all-time prompts/proyectos/tareas
+    /// totals the desktop Stats window's "Totales" dashboard now shows, per
+    /// agent, so the bot reply carries that data too instead of leaving it
+    /// desktop-only. Shows even when there are no usage services enabled,
+    /// since coding-agent activity is independent of that.
+    /// </summary>
+    private string BuildStatsCaption(List<UsageSnapshot> snapshots)
+    {
+        var usagePart = snapshots.Count == 0 ? Strings.T("stats.noservices") : BuildReply(snapshots);
+        var agentSummary = BuildStatsAgentSummary();
+        return string.IsNullOrEmpty(agentSummary) ? usagePart : $"{usagePart}\n\n━━━━━━━━━━━━━\n\n{agentSummary}";
+    }
+
+    // Same fixed order as StatsWindow's dashboard — Claude Code first since
+    // this app started as a Claude-focused tool.
+    private static readonly string[] StatsAgents = { "Claude Code", "Codex" };
+
+    private string BuildStatsAgentSummary()
+    {
+        var sections = new List<string>();
+        foreach (var agent in StatsAgents)
+        {
+            var tasks = agent switch
+            {
+                "Claude Code" => ClaudeCodeProjectsHelper.GetRecentTasks(2000),
+                "Codex" => CodexProjectsHelper.GetRecentTasks(2000),
+                _ => new List<AgentTask>(),
+            };
+            var projectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var taskCount = tasks.Count;
+            var promptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
+
+            if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
+
+            sections.Add(
+                $"🗂️ *{EscapeMarkdown(AgentDisplayNames.For(agent))}*\n" +
+                $"✨ {Strings.F("stats.dashboard.prompts", promptCount)}\n" +
+                $"🗂️ {Strings.F("stats.dashboard.projects", projectCount)}\n" +
+                $"💬 {Strings.F("stats.dashboard.tasks", taskCount)}");
+        }
+
+        return sections.Count == 0 ? "" : $"{Strings.T("stats.dashboard.totals.title")}\n\n" + string.Join("\n\n", sections);
     }
 
     private static readonly Dictionary<string, string> ServiceEmoji = new()
