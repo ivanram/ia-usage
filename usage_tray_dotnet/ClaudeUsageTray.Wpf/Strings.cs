@@ -92,6 +92,8 @@ internal static class Strings
         ["popup.tooltip.settings"] = "Ajustes",
 
         ["stats.title"] = "Estadísticas",
+        ["stats.maximize"] = "Maximizar",
+        ["stats.restore"] = "Restaurar",
         ["stats.subtitle"] = "Últimas horas",
         ["stats.range.today"] = "Hoy",
         ["stats.range.week"] = "Semana",
@@ -234,6 +236,8 @@ internal static class Strings
         ["popup.tooltip.settings"] = "Settings",
 
         ["stats.title"] = "Statistics",
+        ["stats.maximize"] = "Maximize",
+        ["stats.restore"] = "Restore",
         ["stats.subtitle"] = "Last few hours",
         ["stats.range.today"] = "Today",
         ["stats.range.week"] = "Week",

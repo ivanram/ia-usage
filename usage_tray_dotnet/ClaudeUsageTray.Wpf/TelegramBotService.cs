@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -44,6 +45,13 @@ public sealed class TelegramBotService
     private TelegramBotClient? _client;
     private long? _boundChatId;
 
+    // Shuffle-bag for /cita-del-dia: indices are drawn without replacement
+    // until empty, then refilled — so all 100 show up before any repeats,
+    // resetting on app restart rather than being persisted (a joke command
+    // doesn't need a database).
+    private readonly List<int> _remainingQuoteIndices = new();
+    private readonly Random _quoteRandom = new();
+
     public TelegramBotService(Func<IEnumerable<UsageSnapshot>> getSnapshots, UsageHistoryStore historyStore, PromptCountStore promptCountStore)
     {
         _getSnapshots = getSnapshots;
@@ -62,12 +70,16 @@ public sealed class TelegramBotService
 
         _ = client.SetMyCommands(new[]
         {
-            new BotCommand { Command = "uso", Description = "Ver uso de Claude y ChatGPT" },
+            new BotCommand { Command = "uso", Description = "Ver uso de las IA" },
             new BotCommand { Command = "stats", Description = "Ver gráfico de uso reciente" },
             new BotCommand { Command = "apps", Description = "Ver apps en uso en el PC" },
-            new BotCommand { Command = "proyectos", Description = "Ver proyectos recientes de Claude Code" },
+            new BotCommand { Command = "proyectos", Description = "Ver proyectos recientes de Claude Code y ChatGPT Codex" },
             new BotCommand { Command = "apagarpc", Description = "Apagar el PC (pide confirmación)" },
             new BotCommand { Command = "reiniciar", Description = "Reiniciar el PC (pide confirmación)" },
+            // Telegram command names can't contain hyphens — "cita_del_dia"
+            // is the menu-visible form; the handler below also matches the
+            // literal "/cita-del-dia" text for anyone who types it that way.
+            new BotCommand { Command = "cita_del_dia", Description = "Recibe una cita random del día" },
         }, cancellationToken: ct);
 
         client.StartReceiving(
@@ -174,6 +186,15 @@ public sealed class TelegramBotService
                 {
                     await bot.SendMessage(chatId, Strings.T("telegrambot.restart.confirm"), parseMode: ParseMode.Markdown,
                         replyMarkup: BuildConfirmKeyboard("restart"), cancellationToken: innerCt);
+                    return;
+                }
+
+                if (normalized == "/cita-del-dia" || normalized.StartsWith("/cita-del-dia@")
+                    || normalized == "/cita_del_dia" || normalized.StartsWith("/cita_del_dia@"))
+                {
+                    var quote = GetNextQuote();
+                    await bot.SendMessage(chatId, $"📜 _{EscapeMarkdown(quote)}_", parseMode: ParseMode.Markdown,
+                        replyMarkup: Keyboard, cancellationToken: innerCt);
                     return;
                 }
 
@@ -478,6 +499,19 @@ public sealed class TelegramBotService
     private static string EscapeMarkdown(string text) =>
         text.Replace("_", "\\_").Replace("*", "\\*").Replace("`", "\\`").Replace("[", "\\[");
 
+    // Draws without replacement from DailyQuotes.All until exhausted, then
+    // refills — so every quote shows up once before any repeats.
+    private string GetNextQuote()
+    {
+        if (_remainingQuoteIndices.Count == 0)
+            _remainingQuoteIndices.AddRange(Enumerable.Range(0, DailyQuotes.All.Length));
+
+        var pick = _quoteRandom.Next(_remainingQuoteIndices.Count);
+        var index = _remainingQuoteIndices[pick];
+        _remainingQuoteIndices.RemoveAt(pick);
+        return DailyQuotes.All[index];
+    }
+
     // Bounds both dimensions of the message — a very active machine with
     // lots of history could otherwise turn this into a wall of text.
     private const int MaxProjectsListed = 8;
@@ -522,8 +556,8 @@ public sealed class TelegramBotService
                     var head = g[0];
                     var projectName = EscapeMarkdown(System.IO.Path.GetFileName(head.ProjectPath.TrimEnd('\\', '/')) is { Length: > 0 } n ? n : head.ProjectPath);
                     var marker = head.IsActiveNow ? "🟢" : "📁";
-                    var status = head.IsActiveNow ? Strings.T("telegrambot.projects.active") : TimeFormat.Ago(head.LastActivity);
-                    var headLine = $"{marker} *{projectName}* — {status}";
+                    var headLine = $"{marker} *{projectName}*";
+                    var statusLine = head.IsActiveNow ? Strings.T("telegrambot.projects.active") : TimeFormat.Ago(head.LastActivity);
 
                     var promptLine = promptTotals.TryGetValue(head.ProjectPath, out var promptCount) && promptCount > 0
                         ? Strings.F("telegrambot.projects.prompts", promptCount)
@@ -535,8 +569,8 @@ public sealed class TelegramBotService
                     // silently drop its most recent task from the list.
                     // Exception: a lone task with no name (Claude Code only
                     // ever names the currently-active session, never a
-                    // historical one) would just repeat the header's own
-                    // "hace X" — skip it rather than show the same
+                    // historical one) would just repeat the status line's
+                    // own "hace X" — skip it rather than show the same
                     // information twice.
                     var skipTaskLines = g.Count == 1 && string.IsNullOrWhiteSpace(g[0].Name);
                     var taskLines = skipTaskLines
@@ -548,13 +582,13 @@ public sealed class TelegramBotService
                             return $" ↳ {activeTag}{label}";
                         });
 
-                    var lines = new List<string> { headLine };
+                    var lines = new List<string> { headLine, statusLine };
                     if (promptLine is not null) lines.Add(promptLine);
                     lines.AddRange(taskLines);
                     return string.Join("\n", lines);
                 });
 
-                return $"🗂️ *{EscapeMarkdown(agentGroup.Key)}*\n\n" + string.Join("\n\n", blocks);
+                return $"🗂️ *{EscapeMarkdown(AgentDisplayNames.For(agentGroup.Key))}*\n\n" + string.Join("\n\n", blocks);
             });
 
         return string.Join("\n\n", agentSections);

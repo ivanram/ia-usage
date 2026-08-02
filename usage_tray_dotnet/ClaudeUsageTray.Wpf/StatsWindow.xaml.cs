@@ -25,10 +25,22 @@ public partial class StatsWindow : Window
     // scroll slack, not a layout bug.
     private const double PerServiceChromeHeight = 48;
     private const double AnchorGap = 12;
-    // "50% más ancha" than the old popup-matching width, per the user's
-    // request — kept relative to the popup's own width so it scales
-    // sensibly regardless of DPI/monitor.
-    private const double WidthMultiplier = 1.5;
+    // Wider than the popup-matching width, per the user's request — kept
+    // relative to the popup's own width so it scales sensibly regardless
+    // of DPI/monitor.
+    private const double WidthMultiplier = 1.6;
+    // The default height used to match the popup's exactly; once the range
+    // tabs, prompt-mode toggle, and dashboard rows were added, that no
+    // longer left enough room for even one chart without scrolling — this
+    // is extra headroom for those rows, on top of the popup-matched height.
+    private const double ExtraDefaultHeight = 170;
+
+    // "Grandecita, pero no enorme" — a comfortable working size well short
+    // of the monitor's full work area, not a real OS maximize.
+    private const double MaximizedWidthFraction = 0.78;
+    private const double MaximizedHeightFraction = 0.82;
+    private const double MaxMaximizedWidth = 1100;
+    private const double MaxMaximizedHeight = 850;
 
     private const double MinZoom = 1.0;
     private const double MaxZoom = 4.0;
@@ -47,6 +59,9 @@ public partial class StatsWindow : Window
     private double _zoomLevel = MinZoom;
     private StatsRange _range = StatsRange.Today;
     private PromptDisplayMode _promptMode = PromptDisplayMode.New;
+
+    private bool _isMaximized;
+    private double _preMaximizeWidth, _preMaximizeHeight, _preMaximizeLeft, _preMaximizeTop;
 
     // Same reasoning as SettingsWindow's taskbar icon fields — built once
     // and kept alive for the window's lifetime, sent to Windows via
@@ -71,7 +86,7 @@ public partial class StatsWindow : Window
         Title = Strings.T("stats.title");
 
         _defaultWidth = Math.Max(MinWidth, anchorBounds.Width * WidthMultiplier);
-        _defaultHeight = Math.Max(MinHeight, anchorBounds.Height);
+        _defaultHeight = Math.Max(MinHeight, anchorBounds.Height + ExtraDefaultHeight);
         _defaultLeft = anchorBounds.Left - _defaultWidth - AnchorGap;
         _defaultTop = anchorBounds.Top;
 
@@ -143,6 +158,55 @@ public partial class StatsWindow : Window
         Left = _defaultLeft;
         Top = _defaultTop;
         _zoomLevel = MinZoom;
+        _isMaximized = false;
+        Render();
+    }
+
+    /// <summary>
+    /// Not a real OS maximize (no fullscreen) — "grandecita, pero no
+    /// enorme": a comfortable fixed fraction of whatever monitor the
+    /// window currently sits on, centered there. Toggling again restores
+    /// whatever size/position the window had right before, the same way
+    /// a normal maximize/restore button behaves.
+    /// </summary>
+    private void OnMaximizeClick(object sender, RoutedEventArgs e)
+    {
+        if (_isMaximized)
+        {
+            Width = _preMaximizeWidth;
+            Height = _preMaximizeHeight;
+            Left = _preMaximizeLeft;
+            Top = _preMaximizeTop;
+            _isMaximized = false;
+        }
+        else
+        {
+            _preMaximizeWidth = Width;
+            _preMaximizeHeight = Height;
+            _preMaximizeLeft = Left;
+            _preMaximizeTop = Top;
+
+            var dpi = VisualTreeHelper.GetDpi(this);
+            var centerPhysical = new NativeScreenHelper.POINT
+            {
+                X = (int)((Left + Width / 2) * dpi.DpiScaleX),
+                Y = (int)((Top + Height / 2) * dpi.DpiScaleY),
+            };
+            var workArea = NativeScreenHelper.GetWorkAreaForPoint(centerPhysical);
+            var workLeftDip = workArea.Left / dpi.DpiScaleX;
+            var workTopDip = workArea.Top / dpi.DpiScaleY;
+            var workWidthDip = (workArea.Right - workArea.Left) / dpi.DpiScaleX;
+            var workHeightDip = (workArea.Bottom - workArea.Top) / dpi.DpiScaleY;
+
+            var targetWidth = Math.Min(workWidthDip * MaximizedWidthFraction, MaxMaximizedWidth);
+            var targetHeight = Math.Min(workHeightDip * MaximizedHeightFraction, MaxMaximizedHeight);
+
+            Width = targetWidth;
+            Height = targetHeight;
+            Left = workLeftDip + (workWidthDip - targetWidth) / 2;
+            Top = workTopDip + (workHeightDip - targetHeight) / 2;
+            _isMaximized = true;
+        }
         Render();
     }
 
@@ -293,6 +357,11 @@ public partial class StatsWindow : Window
         TitleTextBlock.Foreground = textPrimary;
         ResetSizeGlyph.Foreground = textSecondary;
         CloseGlyph.Foreground = textPrimary;
+        // E922 "Maximize" / E923 "Restore" — same pair of glyphs a normal
+        // Windows title bar swaps between.
+        MaximizeGlyph.Text = _isMaximized ? "" : "";
+        MaximizeGlyph.Foreground = textSecondary;
+        MaximizeButton.ToolTip = Strings.T(_isMaximized ? "stats.restore" : "stats.maximize");
 
         BuildRangeSelector(textPrimary, textSecondary, accent);
         BuildPromptModeSelector(textSecondary, promptLineBrush);
@@ -385,7 +454,7 @@ public partial class StatsWindow : Window
             var stack = new StackPanel();
             stack.Children.Add(new TextBlock
             {
-                Text = agent,
+                Text = AgentDisplayNames.For(agent),
                 FontSize = 12,
                 FontWeight = FontWeights.Medium,
                 Foreground = textPrimary,

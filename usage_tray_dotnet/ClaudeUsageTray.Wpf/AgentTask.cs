@@ -10,3 +10,21 @@ namespace ClaudeUsageTray;
 /// instance, not historical ones).
 /// </summary>
 public readonly record struct AgentTask(string Agent, string ProjectPath, DateTime LastActivity, bool IsActiveNow, string? Name);
+
+/// <summary>
+/// The internal agent key ("Codex") stays exactly as-is everywhere it's
+/// used for matching/storage — ChartBuilder's usage-service mapping,
+/// PromptCountStore's rows, TrayOrchestrator's sampling calls — so
+/// existing history.db data and the Claude/ChatGPT chart-overlay lookup
+/// keep working. This is purely a presentation-layer relabel for wherever
+/// the agent name is shown to the user, since "Codex" alone reads as
+/// unrelated to ChatGPT unless you already know it's OpenAI's coding CLI.
+/// </summary>
+internal static class AgentDisplayNames
+{
+    public static string For(string agent) => agent switch
+    {
+        "Codex" => "ChatGPT Codex",
+        _ => agent,
+    };
+}
