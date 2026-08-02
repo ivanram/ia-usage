@@ -24,8 +24,14 @@ internal static class ChartBuilder
     /// that one series so a single Visibility flip hides/shows all of it.
     /// <paramref name="PromptGroup"/> is null when there was no prompt data
     /// to plot at all, telling the caller to skip the legend entirely.
+    /// <paramref name="ExtraHeight"/> is how much taller <paramref name="Element"/>
+    /// is than the requested chart height (0 unless a bars sub-panel got
+    /// added) — a fixed-height container around it (the desktop window's
+    /// zoom/scroll viewport) needs to account for this itself, or the bars
+    /// end up silently clipped off since that container never resizes to
+    /// its content on its own.
     /// </summary>
-    public readonly record struct ChartBuildResult(FrameworkElement Element, UIElement UsageGroup, UIElement? PromptGroup);
+    public readonly record struct ChartBuildResult(FrameworkElement Element, UIElement UsageGroup, UIElement? PromptGroup, double ExtraHeight);
 
     public static ChartBuildResult Build(
         IReadOnlyList<UsageHistoryPoint> points,
@@ -55,7 +61,7 @@ internal static class ChartBuilder
                 VerticalAlignment = VerticalAlignment.Center,
                 MaxWidth = width - 32,
             });
-            return new ChartBuildResult(host, usageGroup, null);
+            return new ChartBuildResult(host, usageGroup, null, 0);
         }
 
         // padLeft leaves room for the "0%/50%/100%" axis labels; padBottom
@@ -283,7 +289,8 @@ internal static class ChartBuilder
 
         AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush, resetMarkers, promptHoverPoints);
 
-        return new ChartBuildResult(element, usageGroup, promptGroup);
+        var extraHeight = ReferenceEquals(element, host) ? 0 : PromptBarsPanelHeight;
+        return new ChartBuildResult(element, usageGroup, promptGroup, extraHeight);
     }
 
     // Height of the small bars strip drawn below the main chart for the
@@ -495,7 +502,11 @@ internal static class ChartBuilder
                 var scroller = new ScrollViewer
                 {
                     Width = vw,
-                    Height = chartHeight,
+                    // Fixed-height + VerticalScrollBarVisibility=Disabled means
+                    // anything taller than this is silently clipped, not just
+                    // hidden behind a scrollbar — has to include the bars
+                    // sub-panel's own height or it never appears at all.
+                    Height = chartHeight + chart.ExtraHeight,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
                     Content = chart.Element,

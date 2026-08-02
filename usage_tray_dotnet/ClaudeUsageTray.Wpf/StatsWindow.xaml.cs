@@ -566,12 +566,9 @@ public partial class StatsWindow : Window
             Foreground = textPrimary,
             Margin = new Thickness(0, 0, 0, 6),
         });
-
-        var statsRow = new StackPanel { Orientation = Orientation.Horizontal };
-        statsRow.Children.Add(BuildDashboardStatChip("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
-        statsRow.Children.Add(BuildDashboardStatChip("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
-        statsRow.Children.Add(BuildDashboardStatChip("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary, isLast: true));
-        stack.Children.Add(statsRow);
+        stack.Children.Add(BuildDashboardStatLine("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
+        stack.Children.Add(BuildDashboardStatLine("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
+        stack.Children.Add(BuildDashboardStatLine("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary));
 
         return new Border
         {
@@ -584,11 +581,11 @@ public partial class StatsWindow : Window
         };
     }
 
-    private static FrameworkElement BuildDashboardStatChip(string glyph, string text, Brush foreground, bool isLast = false)
+    private static FrameworkElement BuildDashboardStatLine(string glyph, string text, Brush foreground)
     {
-        var chip = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, isLast ? 0 : 14, 0) };
-        chip.Children.Add(new TextBlock { Text = glyph, FontSize = 11, Margin = new Thickness(0, 0, 5, 0) });
-        chip.Children.Add(new TextBlock { Text = text, FontSize = 11, Foreground = foreground });
-        return chip;
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
+        row.Children.Add(new TextBlock { Text = glyph, FontSize = 11, Margin = new Thickness(0, 0, 6, 0) });
+        row.Children.Add(new TextBlock { Text = text, FontSize = 11, Foreground = foreground });
+        return row;
     }
 }
