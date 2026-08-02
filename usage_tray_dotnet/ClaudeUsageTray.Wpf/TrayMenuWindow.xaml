@@ -1,0 +1,31 @@
+<Window x:Class="ClaudeUsageTray.TrayMenuWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight"
+        WindowStartupLocation="Manual"
+        Deactivated="OnDeactivated"
+        KeyDown="OnKeyDown">
+    <!--
+    Same borderless rounded-card shape as PopupWindow — deliberately NOT a
+    real WPF ContextMenu: that one (a) always carries MaterialDesignThemes'
+    own menu style regardless of what this app's other windows look like,
+    (b) has a native open animation with no simple way to turn off, and
+    (c) sometimes closed itself again almost immediately after opening,
+    which a real owned Window with explicit Deactivated-based dismissal
+    doesn't do.
+    -->
+    <Grid Margin="18">
+        <Border x:Name="RootBorder" CornerRadius="14" MinWidth="200">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black" />
+            </Border.Effect>
+            <StackPanel x:Name="ContentHost" Margin="6" />
+        </Border>
+    </Grid>
+</Window>

@@ -17,7 +17,10 @@ internal static class ChartBuilder
         IReadOnlyList<UsageHistoryPoint> points,
         double width, double height,
         Brush lineBrush, Brush fillBrush, Brush gridBrush, Brush textBrush,
-        string emptyMessage)
+        string emptyMessage,
+        IReadOnlyList<DateTimeOffset>? resetTimestamps = null,
+        IReadOnlyList<(DateTimeOffset At, int Delta)>? promptSeries = null,
+        Brush? promptLineBrush = null)
     {
         var host = new Grid { Width = width, Height = height };
 
@@ -81,17 +84,29 @@ internal static class ChartBuilder
             Margin = new Thickness(padLeft, 0, 0, 0),
         });
 
-        // One dashed vertical line per hour boundary crossed, each labeled
-        // with its clock time — but only when there's enough pixel room
-        // since the previously drawn label, so dense data doesn't turn into
-        // an unreadable smear of overlapping text.
+        // One dashed vertical line per grid boundary crossed, labeled with
+        // clock time for short (Today-ish) ranges or the date itself once
+        // the span gets long enough that hourly lines would be an
+        // unreadable smear — Week/Month views from the Stats window's own
+        // range tabs land in the day/week buckets below. Labels are also
+        // skipped when there's not enough pixel room since the last one,
+        // for the same reason.
+        var totalSpan = maxTime - minTime;
+        var (gridInterval, labelFormat, labelWidth) = totalSpan <= TimeSpan.FromHours(30)
+            ? (TimeSpan.FromHours(1), "HH:mm", 30.0)
+            : totalSpan <= TimeSpan.FromDays(12)
+                ? (TimeSpan.FromDays(1), "d MMM", 36.0)
+                : (TimeSpan.FromDays(7), "d MMM", 36.0);
+
         const double minLabelSpacing = 32;
         var lastLabelX = double.NegativeInfinity;
         var localMin = minTime.ToLocalTime();
-        var hourCursor = new DateTimeOffset(localMin.Year, localMin.Month, localMin.Day, localMin.Hour, 0, 0, localMin.Offset).AddHours(1);
-        while (hourCursor < maxTime)
+        var gridCursor = gridInterval < TimeSpan.FromDays(1)
+            ? new DateTimeOffset(localMin.Year, localMin.Month, localMin.Day, localMin.Hour, 0, 0, localMin.Offset).Add(gridInterval)
+            : new DateTimeOffset(localMin.Year, localMin.Month, localMin.Day, 0, 0, 0, localMin.Offset).Add(gridInterval);
+        while (gridCursor < maxTime)
         {
-            var x = padLeft + plotWidth * ((hourCursor - minTime).TotalSeconds / spanSeconds);
+            var x = padLeft + plotWidth * ((gridCursor - minTime).TotalSeconds / spanSeconds);
             host.Children.Add(new Line
             {
                 X1 = x, X2 = x, Y1 = padTop, Y2 = padTop + plotHeight,
@@ -106,17 +121,17 @@ internal static class ChartBuilder
             {
                 host.Children.Add(new TextBlock
                 {
-                    Text = hourCursor.ToString("HH:mm"),
+                    Text = gridCursor.ToString(labelFormat),
                     Foreground = textBrush, Opacity = 0.6, FontSize = 9,
-                    Width = 30, TextAlignment = TextAlignment.Center,
+                    Width = labelWidth, TextAlignment = TextAlignment.Center,
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(x - 15, padTop + plotHeight + 3, 0, 0),
+                    Margin = new Thickness(x - labelWidth / 2, padTop + plotHeight + 3, 0, 0),
                 });
                 lastLabelX = x;
             }
 
-            hourCursor = hourCursor.AddHours(1);
+            gridCursor = gridCursor.Add(gridInterval);
         }
 
         var screenPoints = points.Select(p =>
@@ -144,7 +159,91 @@ internal static class ChartBuilder
             StrokeEndLineCap = PenLineCap.Round,
         });
 
-        AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush);
+        // ✨ at each detected weekly-reset moment (see UsageHistoryStore.RecordReset)
+        // — sat right on the line at that point, same as everything else here,
+        // so it's obvious which dip in the line was an actual reset versus
+        // just a quiet refresh.
+        var resetMarkers = new List<(double X, double Y)>();
+        if (resetTimestamps is { Count: > 0 })
+        {
+            foreach (var resetAt in resetTimestamps)
+            {
+                if (resetAt < minTime || resetAt > maxTime) continue;
+                var x = padLeft + plotWidth * ((resetAt - minTime).TotalSeconds / spanSeconds);
+                var y = screenPoints.OrderBy(p => Math.Abs(p.X - x)).First().Y;
+                resetMarkers.Add((x, y));
+
+                host.Children.Add(new TextBlock
+                {
+                    Text = "✨",
+                    FontSize = 13,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(x - 7, y - 20, 0, 0),
+                    IsHitTestVisible = false,
+                });
+            }
+        }
+
+        // Prompt-count overlay — an independently-scaled line (own min/max,
+        // not 0-100%) showing how many prompts were made in each sampling
+        // interval, straight from PromptCountStore. Overlaid rather than
+        // plotted separately so a usage jump can be visually correlated
+        // with the prompt volume that caused it. No area fill (this is
+        // meant to read as a distinct secondary series, not another region
+        // competing with the main one) and dashed so it's unambiguous which
+        // line is which even without color.
+        var promptScreenPoints = new List<(Point Screen, int Delta)>();
+        if (promptSeries is { Count: > 0 } && promptLineBrush is not null)
+        {
+            var relevant = promptSeries.Where(p => p.At >= minTime && p.At <= maxTime).ToList();
+            if (relevant.Count > 0)
+            {
+                var promptMax = Math.Max(1, relevant.Max(p => p.Delta));
+                promptScreenPoints = relevant.Select(p =>
+                {
+                    var x = padLeft + plotWidth * ((p.At - minTime).TotalSeconds / spanSeconds);
+                    var y = padTop + plotHeight * (1 - Math.Clamp(p.Delta / (double)promptMax, 0, 1));
+                    return (new Point(x, y), p.Delta);
+                }).ToList();
+
+                if (promptScreenPoints.Count >= 2)
+                {
+                    host.Children.Add(new Path
+                    {
+                        Data = BuildLinePath(promptScreenPoints.Select(p => p.Screen).ToList()),
+                        Stroke = promptLineBrush,
+                        StrokeThickness = 1.75,
+                        StrokeDashArray = new DoubleCollection { 4, 2 },
+                        StrokeLineJoin = PenLineJoin.Round,
+                        StrokeStartLineCap = PenLineCap.Round,
+                        StrokeEndLineCap = PenLineCap.Round,
+                    });
+                }
+                foreach (var (screen, _) in promptScreenPoints)
+                {
+                    host.Children.Add(new Ellipse
+                    {
+                        Width = 5, Height = 5,
+                        Fill = promptLineBrush,
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = new Thickness(screen.X - 2.5, screen.Y - 2.5, 0, 0),
+                        IsHitTestVisible = false,
+                    });
+                }
+
+                host.Children.Add(new TextBlock
+                {
+                    Text = Strings.F("stats.prompts.legend", promptMax),
+                    Foreground = promptLineBrush, Opacity = 0.85, FontSize = 9, FontWeight = FontWeights.Medium,
+                    HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, 0, padRight, 0),
+                });
+            }
+        }
+
+        AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush, resetMarkers, promptScreenPoints);
 
         return host;
     }
@@ -155,9 +254,12 @@ internal static class ChartBuilder
     /// wouldn't register mouse moves at all without an explicit (if
     /// invisible) Background. Only wired for the live Stats window; on the
     /// Telegram image path nothing ever generates real mouse input, so
-    /// this is harmless dead weight there.
+    /// this is harmless dead weight there. When the cursor lands near a
+    /// reset marker's own X, the readout shows "Reseteo" instead of a
+    /// percent — a reset is a discrete event, not a reading, so labeling it
+    /// as a percent would be misleading.
     /// </summary>
-    private static void AddHoverReadout(Grid host, List<Point> screenPoints, IReadOnlyList<UsageHistoryPoint> points, double width, Brush lineBrush, Brush textBrush)
+    private static void AddHoverReadout(Grid host, List<Point> screenPoints, IReadOnlyList<UsageHistoryPoint> points, double width, Brush lineBrush, Brush textBrush, List<(double X, double Y)> resetMarkers, List<(Point Screen, int Delta)> promptPoints)
     {
         host.Background = Brushes.Transparent;
 
@@ -184,6 +286,8 @@ internal static class ChartBuilder
         host.Children.Add(hoverDot);
         host.Children.Add(hoverLabel);
 
+        const double resetHoverTolerancePx = 7;
+
         host.MouseMove += (s, e) =>
         {
             var pos = e.GetPosition(host);
@@ -202,11 +306,25 @@ internal static class ChartBuilder
             var sp = screenPoints[nearestIndex];
             var point = points[nearestIndex];
 
-            hoverDot.Margin = new Thickness(sp.X - hoverDot.Width / 2, sp.Y - hoverDot.Height / 2, 0, 0);
+            var nearestReset = resetMarkers
+                .Where(m => Math.Abs(m.X - pos.X) <= resetHoverTolerancePx)
+                .OrderBy(m => Math.Abs(m.X - pos.X))
+                .Select(m => ((double X, double Y)?)m)
+                .FirstOrDefault();
+            var (anchorX, anchorY) = nearestReset ?? (sp.X, sp.Y);
+
+            hoverDot.Margin = new Thickness(anchorX - hoverDot.Width / 2, anchorY - hoverDot.Height / 2, 0, 0);
             hoverDot.Visibility = Visibility.Visible;
 
-            hoverLabel.Text = $"{point.Percent}%";
-            hoverLabel.Margin = new Thickness(Math.Clamp(sp.X - 16, 0, width - 32), Math.Max(0, sp.Y - 18), 0, 0);
+            var promptSuffix = "";
+            if (promptPoints.Count > 0)
+            {
+                var nearestPrompt = promptPoints.OrderBy(p => Math.Abs(p.Screen.X - pos.X)).First();
+                promptSuffix = $" · {Strings.F("stats.prompts.hover", nearestPrompt.Delta)}";
+            }
+
+            hoverLabel.Text = (nearestReset is not null ? Strings.T("stats.reset") : $"{point.Percent}%") + promptSuffix;
+            hoverLabel.Margin = new Thickness(Math.Clamp(anchorX - 16, 0, width - 60), Math.Max(0, anchorY - 18), 0, 0);
             hoverLabel.Visibility = Visibility.Visible;
         };
         host.MouseLeave += (s, e) =>
@@ -231,11 +349,24 @@ internal static class ChartBuilder
     /// the caller instead of scrolling. Telegram's image rendering leaves
     /// both null and gets the old plain, unwrapped chart.
     /// </summary>
+    // "Claude" and "ChatGPT" are the billed-usage services this chart is
+    // actually keyed on; the prompt-count overlay comes from the CODING
+    // AGENT that drives that usage (Claude Code -> Claude's quota, Codex ->
+    // ChatGPT's) — different names for a reason that's obvious once you
+    // see the two lines move together. Grok has no local coding-agent
+    // counterpart, so it just never gets an overlay.
+    private static readonly Dictionary<string, string> CodingAgentByService = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Claude"] = "Claude Code",
+        ["ChatGPT"] = "Codex",
+    };
+
     public static StackPanel BuildServiceBlocks(
         IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
         double chartWidth, double chartHeight,
         Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush,
-        double? viewportWidth = null, Action<int>? onZoom = null)
+        double? viewportWidth = null, Action<int>? onZoom = null,
+        PromptCountStore? promptCountStore = null, Brush? promptLineBrush = null)
     {
         var container = new StackPanel();
         for (var i = 0; i < serviceNames.Count; i++)
@@ -252,7 +383,13 @@ internal static class ChartBuilder
             block.Children.Add(header);
 
             var points = historyStore.GetHistory(serviceName, since);
-            var chart = Build(points, chartWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"));
+            var resets = historyStore.GetResets(serviceName, since);
+            List<(DateTimeOffset At, int Delta)>? promptSeries = null;
+            if (promptCountStore is not null && CodingAgentByService.TryGetValue(serviceName, out var agent))
+            {
+                promptSeries = promptCountStore.GetAgentDeltaSeries(agent, since);
+            }
+            var chart = Build(points, chartWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"), resets, promptSeries, promptLineBrush);
 
             if (viewportWidth is { } vw && onZoom is not null)
             {

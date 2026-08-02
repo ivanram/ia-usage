@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -9,7 +10,19 @@ namespace ClaudeUsageTray;
 
 public partial class StatsWindow : Window
 {
-    private const double ChartHeight = 130;
+    private enum StatsRange { Today, Week, Month }
+
+    // Floor so charts never get squished unreadable when many services are
+    // stacked in a short window — beyond this point the outer ScrollViewer
+    // takes over again, same as before this got responsive.
+    private const double MinChartHeight = 90;
+    // Estimate of everything BuildServiceBlocks draws around a chart itself
+    // (icon+name header row + its bottom margin, plus the block's own
+    // bottom margin) — used to work out how much of the window's actual
+    // height is left for the charts themselves. Approximate on purpose:
+    // being a few pixels off just means an almost-imperceptible sliver of
+    // scroll slack, not a layout bug.
+    private const double PerServiceChromeHeight = 48;
     private const double AnchorGap = 12;
     // "50% más ancha" than the old popup-matching width, per the user's
     // request — kept relative to the popup's own width so it scales
@@ -22,6 +35,7 @@ public partial class StatsWindow : Window
 
     private readonly List<string> _serviceNames;
     private readonly UsageHistoryStore _historyStore;
+    private readonly PromptCountStore _promptCountStore;
 
     private readonly double _defaultWidth;
     private readonly double _defaultHeight;
@@ -30,6 +44,7 @@ public partial class StatsWindow : Window
 
     private DispatcherTimer? _resizeDebounceTimer;
     private double _zoomLevel = MinZoom;
+    private StatsRange _range = StatsRange.Today;
 
     // Same reasoning as SettingsWindow's taskbar icon fields — built once
     // and kept alive for the window's lifetime, sent to Windows via
@@ -45,11 +60,12 @@ public partial class StatsWindow : Window
     /// flush with its top edge, at a starting width the user can then
     /// resize freely (see ResetSizeButton for getting back to this default).
     /// </summary>
-    public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, Rect anchorBounds)
+    public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, PromptCountStore promptCountStore, Rect anchorBounds)
     {
         InitializeComponent();
         _serviceNames = serviceNames;
         _historyStore = historyStore;
+        _promptCountStore = promptCountStore;
         Title = Strings.T("stats.title");
 
         _defaultWidth = Math.Max(MinWidth, anchorBounds.Width * WidthMultiplier);
@@ -129,6 +145,64 @@ public partial class StatsWindow : Window
     }
 
     /// <summary>
+    /// Deliberately raw points for every range, not hourly/daily averages —
+    /// usage climbs then drops sharply on a reset, and averaging across
+    /// that would smooth the drop into a misleading mid-value, hiding
+    /// exactly the sawtooth shape (and reset timing) this window exists to
+    /// show. Point counts stay easily renderable even at Month with the
+    /// slowest allowed refresh interval (5 min): well under 10k points.
+    /// </summary>
+    private static DateTimeOffset SinceForRange(StatsRange range)
+    {
+        var now = DateTimeOffset.Now;
+        return range switch
+        {
+            StatsRange.Today => new DateTimeOffset(now.Date, now.Offset),
+            StatsRange.Week => now.AddDays(-7),
+            StatsRange.Month => now.AddDays(-30),
+            _ => now.AddDays(-1),
+        };
+    }
+
+    private void BuildRangeSelector(Brush textPrimary, Brush textSecondary, Brush accent)
+    {
+        RangeSelectorHost.Children.Clear();
+        RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.today"), StatsRange.Today, textSecondary, accent));
+        RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.week"), StatsRange.Week, textSecondary, accent));
+        RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.month"), StatsRange.Month, textSecondary, accent));
+    }
+
+    private FrameworkElement BuildRangeTab(string text, StatsRange range, Brush textSecondary, Brush accent)
+    {
+        var isActive = _range == range;
+        var activeBg = accent.Clone();
+        activeBg.Opacity = 0.14;
+
+        var border = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 5, 12, 5),
+            Margin = new Thickness(0, 0, 6, 0),
+            Background = isActive ? activeBg : Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 12,
+                FontWeight = isActive ? FontWeights.Medium : FontWeights.Normal,
+                Foreground = isActive ? accent : textSecondary,
+            },
+        };
+        border.MouseLeftButtonUp += (s, e) =>
+        {
+            if (_range == range) return;
+            _range = range;
+            Render();
+        };
+        return border;
+    }
+
+    /// <summary>
     /// Same hand-picked colors as PopupWindow.ApplyThemeColors() — not the
     /// MaterialDesignPaper/Body resources, which read as a subtly different
     /// (slightly whiter/flatter) shade than the popup's own background and
@@ -166,6 +240,23 @@ public partial class StatsWindow : Window
         ResetSizeGlyph.Foreground = textSecondary;
         CloseGlyph.Foreground = textPrimary;
 
+        BuildRangeSelector(textPrimary, textSecondary, accent);
+
+        var since = SinceForRange(_range);
+        var dashboard = BuildDashboard(textPrimary, textSecondary, gridBrush, since);
+        var dashboardHeight = 0.0;
+        if (dashboard is not null)
+        {
+            ContentHost.Children.Add(dashboard);
+            // Force a layout pass now so its real height is known before
+            // the chart-height budget below is computed — otherwise the
+            // dashboard's own space wouldn't be accounted for and charts
+            // could overflow the viewport again, right back to the
+            // scrollbar this whole responsive-sizing pass was meant to fix.
+            ContentHost.UpdateLayout();
+            dashboardHeight = dashboard.ActualHeight;
+        }
+
         if (_serviceNames.Count == 0)
         {
             ContentHost.Children.Add(new TextBlock
@@ -188,10 +279,93 @@ public partial class StatsWindow : Window
         var viewportWidth = ContentHost.ActualWidth > 0 ? ContentHost.ActualWidth : _defaultWidth - 40;
         var chartWidth = viewportWidth * _zoomLevel;
 
-        var since = DateTimeOffset.UtcNow.AddHours(-24);
+        // Same idea as the width, but for height: split whatever vertical
+        // room the ScrollViewer's own viewport actually has among the
+        // stacked service blocks, instead of a fixed height that left
+        // spare room unused in a tall window and forced a scrollbar in a
+        // short one.
+        var viewportHeight = ContentScrollViewer.ActualHeight > 0 ? ContentScrollViewer.ActualHeight : _defaultHeight - 76;
+        var availableForCharts = viewportHeight - ContentHost.Margin.Top - ContentHost.Margin.Bottom - dashboardHeight
+            - PerServiceChromeHeight * _serviceNames.Count;
+        var chartHeight = Math.Max(MinChartHeight, availableForCharts / _serviceNames.Count);
+
+        // A violet reads clearly against both the light (#FAFAFA) and dark
+        // (#2B2B2E) chart backgrounds, and doesn't collide with the
+        // green/amber/red usage gradient or the accent color used
+        // elsewhere — important since this line needs to stay visually
+        // distinct from the primary series it's overlaid on.
+        var promptLineBrush = new SolidColorBrush(Color.FromRgb(0x8B, 0x5C, 0xF6));
+
         var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since,
-            chartWidth, ChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
-            viewportWidth, OnChartZoom);
+            chartWidth, chartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
+            viewportWidth, OnChartZoom, _promptCountStore, promptLineBrush);
         ContentHost.Children.Add(blocks);
+    }
+
+    // Agents in a fixed order, matching the /proyectos sections — Claude
+    // Code first since this app started as a Claude-focused tool.
+    private static readonly string[] DashboardAgents = { "Claude Code", "Codex" };
+
+    /// <summary>
+    /// One compact card per coding agent that has any activity in range:
+    /// new prompts (from PromptCountStore), distinct projects touched, and
+    /// distinct tasks/chats — the project/task counts are computed live
+    /// from the same helpers /proyectos uses (cheap: they only read each
+    /// session's first line), not from PromptCountStore, which only ever
+    /// tracks prompt totals. Returns null when neither agent has anything
+    /// to show yet, so Render() can skip adding an empty row.
+    /// </summary>
+    private FrameworkElement? BuildDashboard(Brush textPrimary, Brush textSecondary, Brush cardBackground, DateTimeOffset since)
+    {
+        var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+
+        foreach (var agent in DashboardAgents)
+        {
+            var tasks = agent switch
+            {
+                "Claude Code" => ClaudeCodeProjectsHelper.GetRecentTasks(2000),
+                "Codex" => CodexProjectsHelper.GetRecentTasks(2000),
+                _ => new List<AgentTask>(),
+            };
+            var inRange = tasks.Where(t => t.LastActivity >= since).ToList();
+            var projectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var taskCount = inRange.Count;
+            var promptCount = _promptCountStore.GetAgentTotalInRange(agent, since);
+
+            if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
+
+            var stack = new StackPanel();
+            stack.Children.Add(new TextBlock
+            {
+                Text = agent,
+                FontSize = 12,
+                FontWeight = FontWeights.Medium,
+                Foreground = textPrimary,
+                Margin = new Thickness(0, 0, 0, 6),
+            });
+            stack.Children.Add(BuildDashboardStatLine("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
+            stack.Children.Add(BuildDashboardStatLine("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
+            stack.Children.Add(BuildDashboardStatLine("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary));
+
+            wrap.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14, 10, 14, 10),
+                Margin = new Thickness(0, 0, 10, 10),
+                MinWidth = 150,
+                Background = cardBackground,
+                Child = stack,
+            });
+        }
+
+        return wrap.Children.Count > 0 ? wrap : null;
+    }
+
+    private static FrameworkElement BuildDashboardStatLine(string glyph, string text, Brush foreground)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
+        row.Children.Add(new TextBlock { Text = glyph, FontSize = 11, Margin = new Thickness(0, 0, 6, 0) });
+        row.Children.Add(new TextBlock { Text = text, FontSize = 11, Foreground = foreground });
+        return row;
     }
 }

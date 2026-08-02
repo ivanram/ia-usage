@@ -39,8 +39,64 @@ public sealed class UsageHistoryStore
                 percent INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_usage_history_service_time ON usage_history(service, recorded_at);
+
+            CREATE TABLE IF NOT EXISTS usage_resets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at TEXT NOT NULL,
+                service TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_usage_resets_service_time ON usage_resets(service, recorded_at);
             """;
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// One row per detected reset of a service's PRIMARY (weekly-quota)
+    /// bar — never the short-window one (Claude's 5-hour limit, say).
+    /// Purely a "when did this happen" log so the Stats chart can mark it;
+    /// separate from usage_history's percent samples since a reset is a
+    /// discrete event, not a periodic reading.
+    /// </summary>
+    public void RecordReset(string service, DateTimeOffset at)
+    {
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT INTO usage_resets (recorded_at, service) VALUES ($t, $s)";
+            cmd.Parameters.AddWithValue("$t", at.ToUniversalTime().ToString("O"));
+            cmd.Parameters.AddWithValue("$s", service);
+            cmd.ExecuteNonQuery();
+        }
+        catch
+        {
+            // History is a nice-to-have — never let a storage hiccup affect the live refresh.
+        }
+    }
+
+    public List<DateTimeOffset> GetResets(string service, DateTimeOffset since)
+    {
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT recorded_at FROM usage_resets WHERE service = $s AND recorded_at >= $since ORDER BY recorded_at ASC";
+            cmd.Parameters.AddWithValue("$s", service);
+            cmd.Parameters.AddWithValue("$since", since.ToUniversalTime().ToString("O"));
+            using var reader = cmd.ExecuteReader();
+            var result = new List<DateTimeOffset>();
+            while (reader.Read())
+            {
+                result.Add(DateTimeOffset.Parse(reader.GetString(0)));
+            }
+            return result;
+        }
+        catch
+        {
+            return new List<DateTimeOffset>();
+        }
     }
 
     public void Record(string service, int percent)

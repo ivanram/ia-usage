@@ -45,6 +45,7 @@
     <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="36" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -61,7 +62,9 @@
             </StackPanel>
         </Grid>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="RangeSelectorHost" Grid.Row="1" Orientation="Horizontal" Margin="20,0,20,10" />
+
+        <ScrollViewer x:Name="ContentScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="ContentHost" Margin="20,4,20,20" />
         </ScrollViewer>
     </Grid>

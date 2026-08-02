@@ -33,6 +33,7 @@ public sealed class TelegramBotService
 
     private readonly Func<IEnumerable<UsageSnapshot>> _getSnapshots;
     private readonly UsageHistoryStore _historyStore;
+    private readonly PromptCountStore _promptCountStore;
     private CancellationTokenSource? _cts;
 
     // Kept as instance state (rather than locals captured by the receive
@@ -43,10 +44,11 @@ public sealed class TelegramBotService
     private TelegramBotClient? _client;
     private long? _boundChatId;
 
-    public TelegramBotService(Func<IEnumerable<UsageSnapshot>> getSnapshots, UsageHistoryStore historyStore)
+    public TelegramBotService(Func<IEnumerable<UsageSnapshot>> getSnapshots, UsageHistoryStore historyStore, PromptCountStore promptCountStore)
     {
         _getSnapshots = getSnapshots;
         _historyStore = historyStore;
+        _promptCountStore = promptCountStore;
     }
 
     public void Start(string token, long? boundChatId, Action<long> onBound)
@@ -63,6 +65,7 @@ public sealed class TelegramBotService
             new BotCommand { Command = "uso", Description = "Ver uso de Claude y ChatGPT" },
             new BotCommand { Command = "stats", Description = "Ver gráfico de uso reciente" },
             new BotCommand { Command = "apps", Description = "Ver apps en uso en el PC" },
+            new BotCommand { Command = "proyectos", Description = "Ver proyectos recientes de Claude Code" },
             new BotCommand { Command = "apagarpc", Description = "Apagar el PC (pide confirmación)" },
             new BotCommand { Command = "reiniciar", Description = "Reiniciar el PC (pide confirmación)" },
         }, cancellationToken: ct);
@@ -139,6 +142,24 @@ public sealed class TelegramBotService
                 {
                     var apps = await RunningAppsHelper.GetRunningAppsAsync();
                     await bot.SendMessage(chatId, BuildAppsReply(apps), parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
+                    return;
+                }
+
+                if (normalized == "/proyectos" || normalized.StartsWith("/proyectos@"))
+                {
+                    var tasks = ClaudeCodeProjectsHelper.GetRecentTasks()
+                        .Concat(CodexProjectsHelper.GetRecentTasks())
+                        .ToList();
+                    // Latest totals only — refreshed at most every 30 min by
+                    // TrayOrchestrator's sampling timer, not a live re-scan
+                    // (see ClaudeCodeProjectsHelper/CodexProjectsHelper's
+                    // GetPromptCountsByProject doc comment for why).
+                    var promptTotals = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["Claude Code"] = _promptCountStore.GetLatestTotalsByProject("Claude Code"),
+                        ["Codex"] = _promptCountStore.GetLatestTotalsByProject("Codex"),
+                    };
+                    await bot.SendMessage(chatId, BuildProjectsReply(tasks, promptTotals), parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
                     return;
                 }
 
@@ -456,4 +477,82 @@ public sealed class TelegramBotService
     /// <summary>Legacy Telegram Markdown treats these four characters as formatting — process/window names can contain any of them incidentally.</summary>
     private static string EscapeMarkdown(string text) =>
         text.Replace("_", "\\_").Replace("*", "\\*").Replace("`", "\\`").Replace("[", "\\[");
+
+    // Bounds both dimensions of the message — a very active machine with
+    // lots of history could otherwise turn this into a wall of text.
+    private const int MaxProjectsListed = 8;
+    private const int MaxTasksPerProject = 4;
+
+    // Claude Code first (this app started as a Claude-focused tool), then
+    // whatever else shows up — an unrecognized future agent still gets its
+    // own section, just after these two.
+    private static readonly string[] AgentSectionOrder = { "Claude Code", "Codex" };
+
+    /// <summary>
+    /// One section per agent, each grouping its own tasks by project: a
+    /// header line per project (🟢 + whichever task is active, or 📁 +
+    /// however long ago the most recent one touched it, plus its latest
+    /// known prompt total when PromptCountStore has one), then an indented
+    /// ↳ line per other known chat/task under that same project. Never the
+    /// conversation content itself, which neither ClaudeCodeProjectsHelper
+    /// nor CodexProjectsHelper ever read — only names, timestamps, and
+    /// prompt counts.
+    /// </summary>
+    private static string BuildProjectsReply(List<AgentTask> tasks, Dictionary<string, Dictionary<string, int>> promptTotalsByAgent)
+    {
+        if (tasks.Count == 0) return Strings.T("telegrambot.projects.none");
+
+        var agentSections = tasks
+            .GroupBy(t => t.Agent)
+            .OrderBy(g => Array.IndexOf(AgentSectionOrder, g.Key) is var idx && idx >= 0 ? idx : int.MaxValue)
+            .ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(agentGroup =>
+            {
+                var promptTotals = promptTotalsByAgent.TryGetValue(agentGroup.Key, out var pt) ? pt : new Dictionary<string, int>();
+
+                var projectGroups = agentGroup
+                    .GroupBy(t => t.ProjectPath, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.OrderByDescending(t => t.LastActivity).ToList())
+                    .OrderByDescending(g => g[0].IsActiveNow)
+                    .ThenByDescending(g => g[0].LastActivity)
+                    .Take(MaxProjectsListed);
+
+                var blocks = projectGroups.Select(g =>
+                {
+                    var head = g[0];
+                    var projectName = EscapeMarkdown(System.IO.Path.GetFileName(head.ProjectPath.TrimEnd('\\', '/')) is { Length: > 0 } n ? n : head.ProjectPath);
+                    var marker = head.IsActiveNow ? "🟢" : "📁";
+                    var status = head.IsActiveNow ? Strings.T("telegrambot.projects.active") : TimeFormat.Ago(head.LastActivity);
+                    var promptSuffix = promptTotals.TryGetValue(head.ProjectPath, out var promptCount) && promptCount > 0
+                        ? $" · {Strings.F("telegrambot.projects.prompts", promptCount)}"
+                        : "";
+                    var headLine = $"{marker} *{projectName}* — {status}{promptSuffix}";
+
+                    // Every task gets its own ↳ line, including the most
+                    // recent one — it used to be folded into the header
+                    // line instead, which made a multi-task project
+                    // silently drop its most recent task from the list.
+                    // Exception: a lone task with no name (Claude Code only
+                    // ever names the currently-active session, never a
+                    // historical one) would just repeat the header's own
+                    // "hace X" — skip it rather than show the same
+                    // information twice.
+                    var skipTaskLines = g.Count == 1 && string.IsNullOrWhiteSpace(g[0].Name);
+                    var taskLines = skipTaskLines
+                        ? Enumerable.Empty<string>()
+                        : g.Take(MaxTasksPerProject).Select(t =>
+                        {
+                            var label = !string.IsNullOrWhiteSpace(t.Name) ? EscapeMarkdown(t.Name!) : TimeFormat.Ago(t.LastActivity);
+                            var activeTag = t.IsActiveNow ? "🟢 " : "";
+                            return $" ↳ {activeTag}{label}";
+                        });
+
+                    return string.Join("\n", new[] { headLine }.Concat(taskLines));
+                });
+
+                return $"🗂️ *{EscapeMarkdown(agentGroup.Key)}*\n\n" + string.Join("\n\n", blocks);
+            });
+
+        return string.Join("\n\n", agentSections);
+    }
 }

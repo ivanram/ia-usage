@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using H.NotifyIcon;
+using MaterialDesignThemes.Wpf;
 
 namespace ClaudeUsageTray;
 
@@ -28,12 +29,13 @@ public sealed class TrayOrchestrator : IDisposable
     private readonly Dictionary<string, Task<WebViewUsageHost>> _hostTasks = new();
     private readonly Dictionary<string, UsageSnapshot> _lastSnapshots = new();
     private readonly Dictionary<string, int> _lastPercents = new();
+    private readonly NotificationStateStore _notificationState = NotificationStateStore.Load();
     private static SoundPlayer? _chimePlayer;
     private static SoundPlayer? _tromboneSoundPlayer;
     private DateTime? _lastUpdated;
 
     private TaskbarIcon _trayIcon = null!;
-    private readonly ContextMenu _contextMenu = new();
+    private readonly TrayMenuWindow _trayMenu = new();
     private readonly DispatcherTimer _refreshTimer = new();
     private readonly DispatcherTimer _hoverTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private int _hoverMs;
@@ -41,6 +43,8 @@ public sealed class TrayOrchestrator : IDisposable
     private readonly PopupWindow _popup = new();
     private readonly TelegramBotService _telegram;
     private readonly UsageHistoryStore _historyStore = new();
+    private readonly PromptCountStore _promptCountStore = new();
+    private readonly DispatcherTimer _promptCountTimer = new() { Interval = TimeSpan.FromMinutes(30) };
     private StatsWindow? _statsWindow;
     private AppSettings _settings = AppSettings.Load();
 
@@ -49,7 +53,7 @@ public sealed class TrayOrchestrator : IDisposable
         _telegram = new TelegramBotService(
             () => _providers.Where(IsEnabled)
                 .Select(p => _lastSnapshots.TryGetValue(p.Name, out var s) ? s : new UsageSnapshot { ServiceName = p.Name, Ok = false, ErrorMessage = Strings.T("loading") }),
-            _historyStore);
+            _historyStore, _promptCountStore);
     }
 
     public void Start()
@@ -57,16 +61,17 @@ public sealed class TrayOrchestrator : IDisposable
         Strings.Current = _settings.Language;
         ApplyTheme();
 
-        PopulateContextMenu();
+        PopulateTrayMenu();
+        _trayMenu.WarmUp();
 
         _trayIcon = new TaskbarIcon
         {
             Id = TrayIconGuid,
             Icon = IconFactory.BuildRobotIcon(),
             ToolTipText = _settings.PopupMode == PopupMode.Rich ? Strings.T("app.name") : Strings.F("tray.tooltip.starting", Strings.T("app.name")),
-            ContextMenu = _contextMenu,
         };
         _trayIcon.TrayLeftMouseUp += (s, e) => OnTrayLeftClick();
+        _trayIcon.TrayRightMouseUp += (s, e) => _trayMenu.ShowNearCursor();
         _trayIcon.TrayMouseDoubleClick += (s, e) => OpenSettings();
 
         // TaskbarIcon normally creates its native icon from its own Loaded
@@ -88,6 +93,10 @@ public sealed class TrayOrchestrator : IDisposable
         ApplyTelegramSettings();
         ApplyRefreshInterval();
         _refreshTimer.Tick += async (s, e) => await RefreshAllAsync();
+
+        _promptCountTimer.Tick += async (s, e) => await SamplePromptCountsAsync();
+        _promptCountTimer.Start();
+        _ = SamplePromptCountsAsync();
 
         _ = RefreshAllAsync();
     }
@@ -218,88 +227,38 @@ public sealed class TrayOrchestrator : IDisposable
 
     // Segoe MDL2 Assets glyphs, same font/codepoints the rest of the app
     // already uses for its own icon buttons (PopupWindow's refresh/settings
-    // icons, SettingsWindow's card headers) — keeps the right-click menu
-    // from looking like a bare, un-styled default Windows menu.
+    // icons, SettingsWindow's card headers).
     private const string MenuIconRefresh = "";
     private const string MenuIconSettings = "";
-    private const string MenuIconLogin = "";
     private const string MenuIconExit = "";
 
-    private static TextBlock MenuGlyph(string glyph) => new()
-    {
-        Text = glyph,
-        FontFamily = new FontFamily("Segoe MDL2 Assets"),
-        FontSize = 14,
-        Foreground = (Brush)new BrushConverter().ConvertFrom("#888888")!,
-    };
-
     /// <summary>
-    /// A plain default ContextMenu/MenuItem never picks up the app's own
-    /// dark/light theme (it's always the stock Windows menu look), which
-    /// reads as visually disconnected from the rest of the UI — this pins
-    /// its colors to the same MaterialDesign resources everything else
-    /// uses, so it actually follows Ajustes → Apariencia. Padding/height are
-    /// set directly per item rather than through ItemContainerStyle — a
-    /// shared Style object assigned there was the suspected cause of the
-    /// tray icon's right-click crash (H.NotifyIcon.Wpf hosts this menu
-    /// through its own native popup plumbing, which apparently doesn't get
-    /// along with a reused ItemContainerStyle); setting properties directly
-    /// on each MenuItem gets the same look without touching it.
+    /// Rebuilds _trayMenu's rows in place — called at startup, again (via
+    /// PreviewLanguage) whenever the language changes live, and after every
+    /// refresh/login so the "Iniciar sesión" section only ever lists
+    /// providers that still need it.
     /// </summary>
-    private static void StyleMenuItem(MenuItem item)
+    private void PopulateTrayMenu()
     {
-        item.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
-        item.Padding = new Thickness(10, 7, 14, 7);
-        item.MinHeight = 32;
-    }
+        _trayMenu.ClearItems();
 
-    /// <summary>
-    /// Fills _contextMenu in place — never replaces the ContextMenu object
-    /// itself. H.NotifyIcon.Wpf's TaskbarIcon.ForceCreate binds native
-    /// tray-icon plumbing to the exact ContextMenu instance handed to it at
-    /// construction; swapping in a brand new one afterward (which the
-    /// language-preview code used to do on every Settings save/cancel) left
-    /// that plumbing pointing at a stale object and crashed the whole app
-    /// the next time the icon was right-clicked. Called once at startup and
-    /// again — via PreviewLanguage, clearing Items first — whenever the
-    /// language changes live.
-    /// </summary>
-    private void PopulateContextMenu()
-    {
-        _contextMenu.Items.Clear();
+        _trayMenu.AddItem(MenuIconRefresh, Strings.T("menu.refresh"), () => _ = RefreshAllAsync());
+        _trayMenu.AddItem(MenuIconSettings, Strings.T("menu.settings"), OpenSettings);
 
-        var refreshItem = new MenuItem { Header = Strings.T("menu.refresh"), Icon = MenuGlyph(MenuIconRefresh) };
-        refreshItem.Click += async (s, e) => await RefreshAllAsync();
-        StyleMenuItem(refreshItem);
-        _contextMenu.Items.Add(refreshItem);
-
-        var settingsItem = new MenuItem { Header = Strings.T("menu.settings"), Icon = MenuGlyph(MenuIconSettings) };
-        settingsItem.Click += (s, e) => OpenSettings();
-        StyleMenuItem(settingsItem);
-        _contextMenu.Items.Add(settingsItem);
-
-        var loginMenu = new MenuItem { Header = Strings.T("menu.login"), Icon = MenuGlyph(MenuIconLogin) };
-        StyleMenuItem(loginMenu);
-        foreach (var provider in _providers.Where(p => p.SupportsLogin))
+        var loginProviders = _providers
+            .Where(p => p.SupportsLogin && !(_lastSnapshots.TryGetValue(p.Name, out var s) && s.Ok))
+            .ToList();
+        if (loginProviders.Count > 0)
         {
-            var item = new MenuItem { Header = provider.Name };
-            item.Click += async (s, e) => await LoginAsync(provider);
-            StyleMenuItem(item);
-            loginMenu.Items.Add(item);
+            _trayMenu.AddLabel(Strings.T("menu.login"));
+            foreach (var provider in loginProviders)
+            {
+                _trayMenu.AddItem("", provider.Name, () => _ = LoginAsync(provider), indented: true);
+            }
         }
-        _contextMenu.Items.Add(loginMenu);
 
-        _contextMenu.Items.Add(new Separator());
-
-        var exitItem = new MenuItem { Header = Strings.T("menu.exit"), Icon = MenuGlyph(MenuIconExit) };
-        exitItem.Click += (s, e) => ExitApp();
-        StyleMenuItem(exitItem);
-        _contextMenu.Items.Add(exitItem);
-
-        _contextMenu.SetResourceReference(Control.BackgroundProperty, "MaterialDesignPaper");
-        _contextMenu.SetResourceReference(Control.ForegroundProperty, "MaterialDesignBody");
-        _contextMenu.BorderThickness = new Thickness(1);
-        _contextMenu.SetResourceReference(Control.BorderBrushProperty, "MaterialDesignDivider");
+        _trayMenu.AddSeparator();
+        _trayMenu.AddItem(MenuIconExit, Strings.T("menu.exit"), ExitApp);
     }
 
     private SettingsWindow? _openSettingsWindow;
@@ -345,11 +304,11 @@ public sealed class TrayOrchestrator : IDisposable
         _ = RefreshAllAsync();
     }
 
-    /// <summary>Applies a language process-wide and rebuilds anything with text already baked in at construction time — currently just the tray context menu.</summary>
+    /// <summary>Applies a language process-wide and rebuilds anything with text already baked in at construction time — currently just the tray menu.</summary>
     private void PreviewLanguage(AppLanguage language)
     {
         Strings.Current = language;
-        PopulateContextMenu();
+        PopulateTrayMenu();
     }
 
     /// <summary>
@@ -371,7 +330,7 @@ public sealed class TrayOrchestrator : IDisposable
             return;
         }
 
-        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore, anchor);
+        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore, _promptCountStore, anchor);
         _statsWindow.Closed += (s, e) => _statsWindow = null;
         _statsWindow.Show();
     }
@@ -382,6 +341,7 @@ public sealed class TrayOrchestrator : IDisposable
         ThemeHelper.ApplyAccent(_settings.AccentColor);
         _popup.FlatBarColorHex = _settings.AccentColor == AppSettings.OriginalAccentSentinel ? null : _settings.AccentColor;
         _popup.AnimationsEnabled = _settings.AnimationsEnabled;
+        _trayMenu.ApplyTheme(new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark);
     }
 
     private void ApplyTelegramSettings()
@@ -485,8 +445,36 @@ public sealed class TrayOrchestrator : IDisposable
                 _lastSnapshots[provider.Name] = snap;
                 UpdateTrayText();
                 WriteStatusFile();
+                PopulateTrayMenu();
                 break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Snapshots each coding agent's current per-project prompt counts into
+    /// _promptCountStore — a full transcript scan (unlike the /proyectos
+    /// metadata reads, which only touch a file's first line), so this runs
+    /// on its own 30-minute timer rather than alongside the usage refresh.
+    /// The actual file I/O happens off the UI thread; only the (cheap)
+    /// store writes need to happen at all, and those are synchronous SQLite
+    /// calls fast enough not to matter.
+    /// </summary>
+    private async Task SamplePromptCountsAsync()
+    {
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var (claudeCodeCounts, codexCounts) = await Task.Run(() =>
+                (ClaudeCodeProjectsHelper.GetPromptCountsByProject(), CodexProjectsHelper.GetPromptCountsByProject()));
+
+            _promptCountStore.RecordSnapshot("Claude Code", claudeCodeCounts, now);
+            _promptCountStore.RecordSnapshot("Codex", codexCounts, now);
+            Log($"SamplePromptCountsAsync: Claude Code {claudeCodeCounts.Count} project(s), Codex {codexCounts.Count} project(s)");
+        }
+        catch (Exception ex)
+        {
+            Log($"SamplePromptCountsAsync failed: {ex}");
         }
     }
 
@@ -563,6 +551,7 @@ public sealed class TrayOrchestrator : IDisposable
 
             UpdateTrayText();
             WriteStatusFile();
+            PopulateTrayMenu();
         }
         finally
         {
@@ -589,45 +578,96 @@ public sealed class TrayOrchestrator : IDisposable
     /// "first reading" here really means "since this app instance
     /// started", and if the bar is already sitting at 100% right then, the
     /// user should still hear about it once per launch rather than only
-    /// catching a future 0->100 crossing they might never see.
+    /// catching a future 0->100 crossing they might never see. That's the
+    /// desired behavior for the desktop toast (subtle, once per launch is
+    /// fine) but not for a Telegram push — repeating on every restart while
+    /// still exhausted is genuinely annoying on a phone. Telegram gets its
+    /// own decision below, driven by _notificationState (persisted to disk,
+    /// so it survives restarts) instead of the in-memory flags.
     /// </summary>
     private void CheckForReset(string serviceName, UsageSnapshot snap)
     {
         var notifyEnabled = IsNotifyEnabled(serviceName);
         NotifyLog($"CheckForReset [{serviceName}] notifyEnabled={notifyEnabled} bars={string.Join(",", snap.Bars.Select(b => $"{b.Label}={b.Percent}%"))}");
-        if (!notifyEnabled) return;
 
+        // Detection (and the reset-history log below) always runs, even
+        // with notifications disabled for this service — the Stats window
+        // marking when a service actually resets is a data question, not a
+        // notification preference. Only whether to actually show/send
+        // anything is gated on notifyEnabled, at the bottom.
         var resetDetected = false;
         var exhaustedDetected = false;
-        var eightyDetected = false;
+        var weeklyResetDetected = false;
+        var telegramExhaustedWorthy = false;
+        var telegramEightyWorthy = false;
+        var stateChanged = false;
         foreach (var bar in snap.Bars)
         {
             var key = $"{serviceName}|{bar.Label}";
             if (_lastPercents.TryGetValue(key, out var prev))
             {
-                if (prev >= 10 && bar.Percent < prev - 4) resetDetected = true;
-                // Fires once on the crossing into 100%/80%, not on every
+                if (prev >= 10 && bar.Percent < prev - 4)
+                {
+                    resetDetected = true;
+                    // "Weekly" = whatever cadence the provider's own PRIMARY
+                    // recurring quota bar resets on (see UsageBar.IsPrimary),
+                    // never the short-window one (Claude's 5-hour limit) —
+                    // that's the whole point of logging it: some providers
+                    // reset early, and this is how you'd actually notice.
+                    if (bar.IsPrimary) weeklyResetDetected = true;
+                }
+                // Fires once on the crossing into 100%, not on every
                 // refresh that happens to still read above the line afterward.
                 if (prev < 100 && bar.Percent >= 100) exhaustedDetected = true;
-                if (prev < 80 && bar.Percent >= 80) eightyDetected = true;
                 NotifyLog($"  [{key}] prev={prev} now={bar.Percent} resetDetected={resetDetected} exhaustedDetected={exhaustedDetected}");
             }
             else
             {
                 if (bar.Percent >= 100) exhaustedDetected = true;
-                else if (bar.Percent >= 80) eightyDetected = true;
                 NotifyLog($"  [{key}] no previous reading, now={bar.Percent} exhaustedDetected={exhaustedDetected}");
             }
             _lastPercents[key] = bar.Percent;
-        }
 
-        NotifyLog($"CheckForReset [{serviceName}] result: resetDetected={resetDetected} exhaustedDetected={exhaustedDetected}");
-        if (resetDetected) ShowResetToast(serviceName);
+            // Persisted level machine: "none" -> "eighty" -> "exhausted",
+            // dropping back to "none" only on a real reset (bar < 80%).
+            // Telegram only fires the first time a key climbs INTO a level
+            // it wasn't already at, per the persisted state — restarting
+            // the app just reloads the same stored level, so it can't
+            // re-trigger a send on its own.
+            var currentLevel = bar.Percent >= 100 ? "exhausted" : bar.Percent >= 80 ? "eighty" : "none";
+            var storedLevel = _notificationState.Level.TryGetValue(key, out var lvl) ? lvl : "none";
+            if (currentLevel != storedLevel)
+            {
+                if (currentLevel == "exhausted" && storedLevel != "exhausted") telegramExhaustedWorthy = true;
+                if (currentLevel == "eighty" && storedLevel == "none") telegramEightyWorthy = true;
+                _notificationState.Level[key] = currentLevel;
+                stateChanged = true;
+            }
+        }
+        if (stateChanged) _notificationState.Save();
+        if (weeklyResetDetected) _historyStore.RecordReset(serviceName, DateTimeOffset.UtcNow);
+
+        NotifyLog($"CheckForReset [{serviceName}] result: resetDetected={resetDetected} exhaustedDetected={exhaustedDetected} weeklyResetDetected={weeklyResetDetected} telegramExhaustedWorthy={telegramExhaustedWorthy} telegramEightyWorthy={telegramEightyWorthy}");
+
+        if (!notifyEnabled) return;
+
+        if (resetDetected)
+        {
+            ShowResetToast(serviceName);
+            // A reset can only ever be detected from a live in-session delta
+            // (see the doc comment above), so unlike exhausted/eighty this
+            // is already restart-safe without needing the persisted state.
+            if (_settings.TelegramNotifyUsage) _ = _telegram.SendNotificationAsync(Strings.F("toast.reset", serviceName));
+        }
         if (exhaustedDetected) ShowExhaustedToast(serviceName);
+        if (telegramExhaustedWorthy && _settings.TelegramNotifyUsage)
+        {
+            _ = _telegram.SendNotificationAsync(Strings.F("toast.exhausted", serviceName));
+        }
         // 80% is a Telegram-only heads-up — no desktop toast/sound for it,
         // matching the user's ask for a lighter-weight "just so you know"
         // separate from the more attention-grabbing reset/exhausted ones.
-        if (eightyDetected && _settings.TelegramNotifyUsage && _settings.TelegramNotify80Percent)
+        if (telegramEightyWorthy && _settings.TelegramNotifyUsage && _settings.TelegramNotify80Percent)
         {
             _ = _telegram.SendNotificationAsync(Strings.F("telegram.notify80.message", serviceName));
         }
@@ -657,7 +697,6 @@ public sealed class TrayOrchestrator : IDisposable
         var toast = new ToastWindow();
         toast.ShowNear(serviceName, message);
         if (_settings.NotifySoundEnabled) PlaySound(ref _chimePlayer, "chime.wav");
-        if (_settings.TelegramNotifyUsage) _ = _telegram.SendNotificationAsync(message);
     }
 
     private void ShowExhaustedToast(string serviceName)
@@ -676,7 +715,6 @@ public sealed class TrayOrchestrator : IDisposable
             NotifyLog($"ShowExhaustedToast [{serviceName}] threw: {ex}");
         }
         if (_settings.NotifySoundEnabled) PlaySound(ref _tromboneSoundPlayer, "sad_trombone.wav");
-        if (_settings.TelegramNotifyUsage) _ = _telegram.SendNotificationAsync(message);
     }
 
     private static void PlaySound(ref SoundPlayer? player, string fileName)
@@ -746,6 +784,7 @@ public sealed class TrayOrchestrator : IDisposable
         _trayIcon.Dispose();
         _refreshTimer.Stop();
         _hoverTimer.Stop();
+        _promptCountTimer.Stop();
         _telegram.Stop();
         foreach (var host in _hosts.Values)
         {

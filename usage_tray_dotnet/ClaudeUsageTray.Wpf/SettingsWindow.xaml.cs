@@ -270,7 +270,7 @@ public partial class SettingsWindow : Window
 
         _refreshTextBox = new TextBox
         {
-            Text = Math.Clamp(Result.RefreshMinutes, 1, 60).ToString(),
+            Text = ClampRefreshMinutes(Result.RefreshMinutes).ToString(),
             Width = 50,
             TextAlignment = TextAlignment.Center,
             Style = (Style)FindResource("FlatTextBox"),
@@ -283,9 +283,11 @@ public partial class SettingsWindow : Window
 
         _refreshSlider = new Slider
         {
-            Minimum = 1,
+            Minimum = 5,
             Maximum = 60,
-            Value = Math.Clamp(Result.RefreshMinutes, 1, 60),
+            TickFrequency = 5,
+            IsSnapToTickEnabled = true,
+            Value = ClampRefreshMinutes(Result.RefreshMinutes),
             Style = (Style)FindResource("FlatSlider"),
             Margin = new Thickness(0, 4, 0, 8),
         };
@@ -293,10 +295,18 @@ public partial class SettingsWindow : Window
         _refreshTextBox.LostFocus += (s, e) =>
         {
             if (int.TryParse(_refreshTextBox.Text, out var v))
-                _refreshSlider.Value = Math.Clamp(v, 1, 60);
+                _refreshSlider.Value = ClampRefreshMinutes(v);
         };
         stack.Children.Add(_refreshSlider);
     }
+
+    /// <summary>
+    /// 5 minutes is the floor and every step is a 5-minute increment —
+    /// polling any faster risks looking like spam/abuse to Claude/ChatGPT's
+    /// own servers. Also rounds any older saved value (from before this
+    /// limit existed) to the nearest multiple of 5 instead of rejecting it.
+    /// </summary>
+    private static int ClampRefreshMinutes(int minutes) => Math.Clamp((int)Math.Round(minutes / 5.0) * 5, 5, 60);
 
     private void BuildPopupModeCard(StackPanel stack)
     {
