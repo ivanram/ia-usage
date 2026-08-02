@@ -501,7 +501,17 @@ public sealed class TrayOrchestrator : IDisposable
             return;
         }
 
-        if (_popup.IsVisible) _popup.SetRefreshing(true);
+        // Unconditional, not gated on _popup.IsVisible — the popup can be
+        // shown/hidden (WarmUp's own startup Show()+Hide(), an away-hide
+        // while a slow first fetch is still running, etc.) at any point
+        // between this call and the matching one in `finally` below. Gating
+        // both independently on IsVisible let them see different snapshots
+        // of it, which could skip the "stop spinning" call entirely and
+        // leave the refresh button spinning forever from then on.
+        // SetRefreshing itself is a safe no-op on the visuals whenever the
+        // button doesn't exist yet, so calling it unconditionally costs
+        // nothing.
+        _popup.SetRefreshing(true);
         try
         {
             // Fetched in parallel rather than one provider at a time — each
@@ -556,7 +566,7 @@ public sealed class TrayOrchestrator : IDisposable
         }
         finally
         {
-            if (_popup.IsVisible) _popup.SetRefreshing(false);
+            _popup.SetRefreshing(false);
         }
     }
 
