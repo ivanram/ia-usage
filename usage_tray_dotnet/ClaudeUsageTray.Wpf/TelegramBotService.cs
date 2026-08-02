@@ -523,10 +523,11 @@ public sealed class TelegramBotService
                     var projectName = EscapeMarkdown(System.IO.Path.GetFileName(head.ProjectPath.TrimEnd('\\', '/')) is { Length: > 0 } n ? n : head.ProjectPath);
                     var marker = head.IsActiveNow ? "🟢" : "📁";
                     var status = head.IsActiveNow ? Strings.T("telegrambot.projects.active") : TimeFormat.Ago(head.LastActivity);
-                    var promptSuffix = promptTotals.TryGetValue(head.ProjectPath, out var promptCount) && promptCount > 0
-                        ? $" · {Strings.F("telegrambot.projects.prompts", promptCount)}"
-                        : "";
-                    var headLine = $"{marker} *{projectName}* — {status}{promptSuffix}";
+                    var headLine = $"{marker} *{projectName}* — {status}";
+
+                    var promptLine = promptTotals.TryGetValue(head.ProjectPath, out var promptCount) && promptCount > 0
+                        ? Strings.F("telegrambot.projects.prompts", promptCount)
+                        : null;
 
                     // Every task gets its own ↳ line, including the most
                     // recent one — it used to be folded into the header
@@ -547,7 +548,10 @@ public sealed class TelegramBotService
                             return $" ↳ {activeTag}{label}";
                         });
 
-                    return string.Join("\n", new[] { headLine }.Concat(taskLines));
+                    var lines = new List<string> { headLine };
+                    if (promptLine is not null) lines.Add(promptLine);
+                    lines.AddRange(taskLines);
+                    return string.Join("\n", lines);
                 });
 
                 return $"🗂️ *{EscapeMarkdown(agentGroup.Key)}*\n\n" + string.Join("\n\n", blocks);

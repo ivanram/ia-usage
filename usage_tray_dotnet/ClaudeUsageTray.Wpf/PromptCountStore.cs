@@ -191,4 +191,15 @@ public sealed class PromptCountStore
     /// <summary>Total new prompts across the whole range — just the delta series summed.</summary>
     public int GetAgentTotalInRange(string agent, DateTimeOffset since) =>
         GetAgentDeltaSeries(agent, since).Sum(d => d.Delta);
+
+    /// <summary>
+    /// (timestamp, cumulative total as of that timestamp) pairs — the raw
+    /// numbers themselves rather than the differences between them, for
+    /// the Stats window's "Totales" view of the prompt-count overlay.
+    /// </summary>
+    public List<(DateTimeOffset At, int Total)> GetAgentTotalSeries(string agent, DateTimeOffset since) =>
+        GetAggregateSeries(agent, since)
+            .Where(s => s.RecordedAt >= since)
+            .Select(s => (s.RecordedAt, s.Total))
+            .ToList();
 }

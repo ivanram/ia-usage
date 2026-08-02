@@ -366,7 +366,7 @@ internal static class ChartBuilder
         double chartWidth, double chartHeight,
         Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush,
         double? viewportWidth = null, Action<int>? onZoom = null,
-        PromptCountStore? promptCountStore = null, Brush? promptLineBrush = null)
+        PromptCountStore? promptCountStore = null, Brush? promptLineBrush = null, bool useTotalPrompts = false)
     {
         var container = new StackPanel();
         for (var i = 0; i < serviceNames.Count; i++)
@@ -387,7 +387,9 @@ internal static class ChartBuilder
             List<(DateTimeOffset At, int Delta)>? promptSeries = null;
             if (promptCountStore is not null && CodingAgentByService.TryGetValue(serviceName, out var agent))
             {
-                promptSeries = promptCountStore.GetAgentDeltaSeries(agent, since);
+                promptSeries = useTotalPrompts
+                    ? promptCountStore.GetAgentTotalSeries(agent, since).Select(p => (p.At, p.Total)).ToList()
+                    : promptCountStore.GetAgentDeltaSeries(agent, since);
             }
             var chart = Build(points, chartWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"), resets, promptSeries, promptLineBrush);
 

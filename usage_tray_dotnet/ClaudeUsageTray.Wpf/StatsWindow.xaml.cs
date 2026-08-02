@@ -11,6 +11,7 @@ namespace ClaudeUsageTray;
 public partial class StatsWindow : Window
 {
     private enum StatsRange { Today, Week, Month }
+    private enum PromptDisplayMode { New, Total }
 
     // Floor so charts never get squished unreadable when many services are
     // stacked in a short window — beyond this point the outer ScrollViewer
@@ -45,6 +46,7 @@ public partial class StatsWindow : Window
     private DispatcherTimer? _resizeDebounceTimer;
     private double _zoomLevel = MinZoom;
     private StatsRange _range = StatsRange.Today;
+    private PromptDisplayMode _promptMode = PromptDisplayMode.New;
 
     // Same reasoning as SettingsWindow's taskbar icon fields — built once
     // and kept alive for the window's lifetime, sent to Windows via
@@ -203,6 +205,49 @@ public partial class StatsWindow : Window
     }
 
     /// <summary>
+    /// Nuevos (per-interval deltas, the default) vs Totales (raw cumulative
+    /// count) for the purple prompt-count overlay — same tab visuals as the
+    /// range selector, just smaller and right-aligned in the same row so it
+    /// doesn't need a whole extra row of its own.
+    /// </summary>
+    private void BuildPromptModeSelector(Brush textSecondary, Brush promptLineBrush)
+    {
+        PromptModeSelectorHost.Children.Clear();
+        PromptModeSelectorHost.Children.Add(BuildPromptModeTab(Strings.T("stats.promptmode.new"), PromptDisplayMode.New, textSecondary, promptLineBrush));
+        PromptModeSelectorHost.Children.Add(BuildPromptModeTab(Strings.T("stats.promptmode.total"), PromptDisplayMode.Total, textSecondary, promptLineBrush));
+    }
+
+    private FrameworkElement BuildPromptModeTab(string text, PromptDisplayMode mode, Brush textSecondary, Brush promptLineBrush)
+    {
+        var isActive = _promptMode == mode;
+        var activeBg = promptLineBrush.Clone();
+        activeBg.Opacity = 0.14;
+
+        var border = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 4, 10, 4),
+            Margin = new Thickness(6, 0, 0, 0),
+            Background = isActive ? activeBg : Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 11,
+                FontWeight = isActive ? FontWeights.Medium : FontWeights.Normal,
+                Foreground = isActive ? promptLineBrush : textSecondary,
+            },
+        };
+        border.MouseLeftButtonUp += (s, e) =>
+        {
+            if (_promptMode == mode) return;
+            _promptMode = mode;
+            Render();
+        };
+        return border;
+    }
+
+    /// <summary>
     /// Same hand-picked colors as PopupWindow.ApplyThemeColors() — not the
     /// MaterialDesignPaper/Body resources, which read as a subtly different
     /// (slightly whiter/flatter) shade than the popup's own background and
@@ -235,12 +280,22 @@ public partial class StatsWindow : Window
         var fillBrush = accent.Clone();
         fillBrush.Opacity = 0.16;
 
+        // A violet reads clearly against both the light (#FAFAFA) and dark
+        // (#2B2B2E) chart backgrounds, and doesn't collide with the
+        // green/amber/red usage gradient or the accent color used
+        // elsewhere — important since this line needs to stay visually
+        // distinct from the primary series it's overlaid on. Defined here
+        // (rather than down by BuildServiceBlocks, where it used to live)
+        // since the mode selector tab now needs the same color too.
+        var promptLineBrush = new SolidColorBrush(Color.FromRgb(0x8B, 0x5C, 0xF6));
+
         TitleTextBlock.Text = Strings.T("stats.title");
         TitleTextBlock.Foreground = textPrimary;
         ResetSizeGlyph.Foreground = textSecondary;
         CloseGlyph.Foreground = textPrimary;
 
         BuildRangeSelector(textPrimary, textSecondary, accent);
+        BuildPromptModeSelector(textSecondary, promptLineBrush);
 
         var since = SinceForRange(_range);
         var dashboard = BuildDashboard(textPrimary, textSecondary, gridBrush, since);
@@ -289,16 +344,9 @@ public partial class StatsWindow : Window
             - PerServiceChromeHeight * _serviceNames.Count;
         var chartHeight = Math.Max(MinChartHeight, availableForCharts / _serviceNames.Count);
 
-        // A violet reads clearly against both the light (#FAFAFA) and dark
-        // (#2B2B2E) chart backgrounds, and doesn't collide with the
-        // green/amber/red usage gradient or the accent color used
-        // elsewhere — important since this line needs to stay visually
-        // distinct from the primary series it's overlaid on.
-        var promptLineBrush = new SolidColorBrush(Color.FromRgb(0x8B, 0x5C, 0xF6));
-
         var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since,
             chartWidth, chartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
-            viewportWidth, OnChartZoom, _promptCountStore, promptLineBrush);
+            viewportWidth, OnChartZoom, _promptCountStore, promptLineBrush, _promptMode == PromptDisplayMode.Total);
         ContentHost.Children.Add(blocks);
     }
 

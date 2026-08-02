@@ -62,7 +62,10 @@
             </StackPanel>
         </Grid>
 
-        <StackPanel x:Name="RangeSelectorHost" Grid.Row="1" Orientation="Horizontal" Margin="20,0,20,10" />
+        <Grid Grid.Row="1" Margin="20,0,20,10">
+            <StackPanel x:Name="RangeSelectorHost" Orientation="Horizontal" HorizontalAlignment="Left" />
+            <StackPanel x:Name="PromptModeSelectorHost" Orientation="Horizontal" HorizontalAlignment="Right" />
+        </Grid>
 
         <ScrollViewer x:Name="ContentScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="ContentHost" Margin="20,4,20,20" />
