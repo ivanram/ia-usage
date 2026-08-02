@@ -144,6 +144,13 @@ internal static class Strings
         ["telegrambot.apps.foreground"] = "primer plano",
         ["telegrambot.apps.active"] = "activa ({0}% CPU)",
         ["telegrambot.apps.footer"] = "{0} apps abiertas",
+        ["telegrambot.shutdown.confirm"] = "⚠️ ¿Seguro que quieres *apagar* el PC?",
+        ["telegrambot.restart.confirm"] = "⚠️ ¿Seguro que quieres *reiniciar* el PC?",
+        ["telegrambot.confirm.yes"] = "✅ Sí",
+        ["telegrambot.confirm.no"] = "❌ Cancelar",
+        ["telegrambot.cancelled"] = "Cancelado.",
+        ["telegrambot.shutdown.doing"] = "🔴 Apagando el PC…",
+        ["telegrambot.restart.doing"] = "🔁 Reiniciando el PC…",
     };
 
     private static readonly Dictionary<string, string> En = new()
@@ -265,5 +272,12 @@ internal static class Strings
         ["telegrambot.apps.foreground"] = "foreground",
         ["telegrambot.apps.active"] = "active ({0}% CPU)",
         ["telegrambot.apps.footer"] = "{0} apps open",
+        ["telegrambot.shutdown.confirm"] = "⚠️ Are you sure you want to *shut down* the PC?",
+        ["telegrambot.restart.confirm"] = "⚠️ Are you sure you want to *restart* the PC?",
+        ["telegrambot.confirm.yes"] = "✅ Yes",
+        ["telegrambot.confirm.no"] = "❌ Cancel",
+        ["telegrambot.cancelled"] = "Cancelled.",
+        ["telegrambot.shutdown.doing"] = "🔴 Shutting down the PC…",
+        ["telegrambot.restart.doing"] = "🔁 Restarting the PC…",
     };
 }

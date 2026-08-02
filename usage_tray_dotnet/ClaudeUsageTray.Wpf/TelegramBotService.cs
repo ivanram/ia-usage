@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -62,11 +63,19 @@ public sealed class TelegramBotService
             new BotCommand { Command = "uso", Description = "Ver uso de Claude y ChatGPT" },
             new BotCommand { Command = "stats", Description = "Ver gráfico de uso reciente" },
             new BotCommand { Command = "apps", Description = "Ver apps en uso en el PC" },
+            new BotCommand { Command = "apagarpc", Description = "Apagar el PC (pide confirmación)" },
+            new BotCommand { Command = "reiniciar", Description = "Reiniciar el PC (pide confirmación)" },
         }, cancellationToken: ct);
 
         client.StartReceiving(
             async (bot, update, innerCt) =>
             {
+                if (update.CallbackQuery is { } callback)
+                {
+                    await HandlePowerCallbackAsync(bot, callback, innerCt);
+                    return;
+                }
+
                 if (update.Message is not { Text: { } text } message) return;
                 var chatId = message.Chat.Id;
 
@@ -133,11 +142,79 @@ public sealed class TelegramBotService
                     return;
                 }
 
+                if (normalized == "/apagarpc" || normalized.StartsWith("/apagarpc@"))
+                {
+                    await bot.SendMessage(chatId, Strings.T("telegrambot.shutdown.confirm"), parseMode: ParseMode.Markdown,
+                        replyMarkup: BuildConfirmKeyboard("shutdown"), cancellationToken: innerCt);
+                    return;
+                }
+
+                if (normalized == "/reiniciar" || normalized.StartsWith("/reiniciar@"))
+                {
+                    await bot.SendMessage(chatId, Strings.T("telegrambot.restart.confirm"), parseMode: ParseMode.Markdown,
+                        replyMarkup: BuildConfirmKeyboard("restart"), cancellationToken: innerCt);
+                    return;
+                }
+
                 await bot.SendMessage(chatId, Strings.F("telegrambot.usebutton", UsageButtonText), replyMarkup: Keyboard, cancellationToken: innerCt);
             },
             (bot, exception, innerCt) => Task.CompletedTask,
-            new ReceiverOptions { AllowedUpdates = new[] { UpdateType.Message } },
+            new ReceiverOptions { AllowedUpdates = new[] { UpdateType.Message, UpdateType.CallbackQuery } },
             ct);
+    }
+
+    private static InlineKeyboardMarkup BuildConfirmKeyboard(string action) => new(new[]
+    {
+        new[]
+        {
+            InlineKeyboardButton.WithCallbackData(Strings.T("telegrambot.confirm.yes"), $"{action}:yes"),
+            InlineKeyboardButton.WithCallbackData(Strings.T("telegrambot.confirm.no"), $"{action}:no"),
+        },
+    });
+
+    /// <summary>
+    /// Handles the Sí/No tap on the /apagarpc and /reiniciar confirmation
+    /// prompts. The Telegram-side confirmation IS the safety gate the user
+    /// asked for — this only fires the actual shutdown/restart once they've
+    /// explicitly tapped "Sí" on a message only their own bound chat can see.
+    /// </summary>
+    private async Task HandlePowerCallbackAsync(ITelegramBotClient bot, CallbackQuery callback, CancellationToken ct)
+    {
+        var chatId = callback.Message?.Chat.Id;
+        if (chatId is null || chatId != _boundChatId || callback.Data is not { } data)
+        {
+            await bot.AnswerCallbackQuery(callback.Id, cancellationToken: ct);
+            return;
+        }
+
+        await bot.AnswerCallbackQuery(callback.Id, cancellationToken: ct);
+
+        var parts = data.Split(':');
+        if (parts.Length != 2) return;
+        var action = parts[0];
+        var confirmed = parts[1] == "yes";
+        var messageId = callback.Message!.MessageId;
+
+        if (!confirmed)
+        {
+            await bot.EditMessageText(chatId.Value, messageId, Strings.T("telegrambot.cancelled"), cancellationToken: ct);
+            return;
+        }
+
+        var (doingKey, shutdownArg) = action switch
+        {
+            "shutdown" => ("telegrambot.shutdown.doing", "/s /t 5"),
+            "restart" => ("telegrambot.restart.doing", "/r /t 5"),
+            _ => (null, null),
+        };
+        if (doingKey is null) return;
+
+        await bot.EditMessageText(chatId.Value, messageId, Strings.T(doingKey), cancellationToken: ct);
+
+        // A short native delay (not a way to undo the confirmation, which
+        // already happened) — mostly so the "Apagando…" edit above has a
+        // moment to actually reach Telegram before the connection drops.
+        Process.Start(new ProcessStartInfo("shutdown", shutdownArg!) { UseShellExecute = true, CreateNoWindow = true });
     }
 
     public void Stop()

@@ -89,8 +89,12 @@ internal static class RunningAppsHelper
             }
         }
 
+        // AI apps sort first, full stop — the whole point of this app is
+        // tracking AI usage, so those are what the user actually opened
+        // /apps to check on, not whatever happens to be in the foreground.
         return result
-            .OrderByDescending(a => a.IsForeground)
+            .OrderByDescending(IsAiApp)
+            .ThenByDescending(a => a.IsForeground)
             .ThenByDescending(a => a.CpuPercent)
             .ThenBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
