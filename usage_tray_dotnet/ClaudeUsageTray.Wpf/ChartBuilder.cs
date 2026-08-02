@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 
@@ -13,16 +14,32 @@ namespace ClaudeUsageTray;
 /// </summary>
 internal static class ChartBuilder
 {
-    public static FrameworkElement Build(
+    /// <summary>
+    /// <paramref name="Element"/> is what actually goes in the chart's
+    /// (possibly zoomable/scrollable) viewport — either just the main chart
+    /// Grid, or that Grid stacked with a separate prompts bar sub-panel
+    /// below it. <paramref name="UsageGroup"/>/<paramref name="PromptGroup"/>
+    /// are the toggle targets for the clickable legend built by
+    /// <see cref="BuildServiceBlocks"/> — each wraps everything belonging to
+    /// that one series so a single Visibility flip hides/shows all of it.
+    /// <paramref name="PromptGroup"/> is null when there was no prompt data
+    /// to plot at all, telling the caller to skip the legend entirely.
+    /// </summary>
+    public readonly record struct ChartBuildResult(FrameworkElement Element, UIElement UsageGroup, UIElement? PromptGroup);
+
+    public static ChartBuildResult Build(
         IReadOnlyList<UsageHistoryPoint> points,
         double width, double height,
         Brush lineBrush, Brush fillBrush, Brush gridBrush, Brush textBrush,
         string emptyMessage,
         IReadOnlyList<DateTimeOffset>? resetTimestamps = null,
         IReadOnlyList<(DateTimeOffset At, int Delta)>? promptSeries = null,
-        Brush? promptLineBrush = null)
+        Brush? promptLineBrush = null,
+        bool promptsAsBars = false)
     {
         var host = new Grid { Width = width, Height = height };
+        var usageGroup = new Grid();
+        host.Children.Add(usageGroup);
 
         if (points.Count < 2)
         {
@@ -38,7 +55,7 @@ internal static class ChartBuilder
                 VerticalAlignment = VerticalAlignment.Center,
                 MaxWidth = width - 32,
             });
-            return host;
+            return new ChartBuildResult(host, usageGroup, null);
         }
 
         // padLeft leaves room for the "0%/50%/100%" axis labels; padBottom
@@ -147,9 +164,9 @@ internal static class ChartBuilder
         fillFigure.Segments.Add(new LineSegment(new Point(screenPoints[^1].X, padTop + plotHeight), true));
         fillFigure.Segments.Add(new LineSegment(new Point(screenPoints[0].X, padTop + plotHeight), true));
         fillFigure.IsClosed = true;
-        host.Children.Add(new Path { Data = new PathGeometry(new[] { fillFigure }), Fill = fillBrush });
+        usageGroup.Children.Add(new Path { Data = new PathGeometry(new[] { fillFigure }), Fill = fillBrush });
 
-        host.Children.Add(new Path
+        usageGroup.Children.Add(new Path
         {
             Data = linePath,
             Stroke = lineBrush,
@@ -173,7 +190,7 @@ internal static class ChartBuilder
                 var y = screenPoints.OrderBy(p => Math.Abs(p.X - x)).First().Y;
                 resetMarkers.Add((x, y));
 
-                host.Children.Add(new TextBlock
+                usageGroup.Children.Add(new TextBlock
                 {
                     Text = "✨",
                     FontSize = 13,
@@ -185,33 +202,54 @@ internal static class ChartBuilder
             }
         }
 
-        // Prompt-count overlay — an independently-scaled line (own min/max,
-        // not 0-100%) showing how many prompts were made in each sampling
-        // interval, straight from PromptCountStore. Overlaid rather than
-        // plotted separately so a usage jump can be visually correlated
-        // with the prompt volume that caused it. No area fill (this is
-        // meant to read as a distinct secondary series, not another region
-        // competing with the main one) and dashed so it's unambiguous which
-        // line is which even without color.
-        var promptScreenPoints = new List<(Point Screen, int Delta)>();
-        if (promptSeries is { Count: > 0 } && promptLineBrush is not null)
+        // Prompt series in range, independent of how it ends up drawn (line
+        // overlay for "Totales", bars sub-panel for "Nuevos") — also feeds
+        // the hover readout's "· N prompts" suffix either way.
+        var relevantPrompts = promptSeries is { Count: > 0 }
+            ? promptSeries.Where(p => p.At >= minTime && p.At <= maxTime).ToList()
+            : new List<(DateTimeOffset At, int Delta)>();
+        var promptHoverPoints = relevantPrompts.Select(p =>
+            (new Point(padLeft + plotWidth * ((p.At - minTime).TotalSeconds / spanSeconds), 0.0), p.Delta)).ToList();
+
+        FrameworkElement element = host;
+        UIElement? promptGroup = null;
+
+        // "Totales" (cumulative) stays an overlaid line on the same canvas
+        // as the usage chart, so a jump in usage can be visually correlated
+        // with the prompt volume that caused it. "Nuevos" (per-interval
+        // deltas) reads much better as vertical bars — but bars drawn on
+        // top of the usage fill would constantly clash with it, so those go
+        // in a separate strip below instead (see BuildPromptBarsPanel).
+        if (relevantPrompts.Count > 0 && promptLineBrush is not null)
         {
-            var relevant = promptSeries.Where(p => p.At >= minTime && p.At <= maxTime).ToList();
-            if (relevant.Count > 0)
+            if (promptsAsBars)
             {
-                var promptMax = Math.Max(1, relevant.Max(p => p.Delta));
-                promptScreenPoints = relevant.Select(p =>
+                var barsPanel = BuildPromptBarsPanel(relevantPrompts, width, PromptBarsPanelHeight, promptLineBrush, minTime, spanSeconds, padLeft, padRight);
+                var stack = new StackPanel();
+                stack.Children.Add(host);
+                stack.Children.Add(barsPanel);
+                element = stack;
+                promptGroup = barsPanel;
+            }
+            else
+            {
+                var lineGroup = new Grid();
+                host.Children.Add(lineGroup);
+                promptGroup = lineGroup;
+
+                var promptMax = Math.Max(1, relevantPrompts.Max(p => p.Delta));
+                var promptScreenPoints = relevantPrompts.Select(p =>
                 {
                     var x = padLeft + plotWidth * ((p.At - minTime).TotalSeconds / spanSeconds);
                     var y = padTop + plotHeight * (1 - Math.Clamp(p.Delta / (double)promptMax, 0, 1));
-                    return (new Point(x, y), p.Delta);
+                    return new Point(x, y);
                 }).ToList();
 
                 if (promptScreenPoints.Count >= 2)
                 {
-                    host.Children.Add(new Path
+                    lineGroup.Children.Add(new Path
                     {
-                        Data = BuildLinePath(promptScreenPoints.Select(p => p.Screen).ToList()),
+                        Data = BuildLinePath(promptScreenPoints),
                         Stroke = promptLineBrush,
                         StrokeThickness = 1.75,
                         StrokeDashArray = new DoubleCollection { 4, 2 },
@@ -220,9 +258,9 @@ internal static class ChartBuilder
                         StrokeEndLineCap = PenLineCap.Round,
                     });
                 }
-                foreach (var (screen, _) in promptScreenPoints)
+                foreach (var screen in promptScreenPoints)
                 {
-                    host.Children.Add(new Ellipse
+                    lineGroup.Children.Add(new Ellipse
                     {
                         Width = 5, Height = 5,
                         Fill = promptLineBrush,
@@ -233,7 +271,7 @@ internal static class ChartBuilder
                     });
                 }
 
-                host.Children.Add(new TextBlock
+                lineGroup.Children.Add(new TextBlock
                 {
                     Text = Strings.F("stats.prompts.legend", promptMax),
                     Foreground = promptLineBrush, Opacity = 0.85, FontSize = 9, FontWeight = FontWeights.Medium,
@@ -243,9 +281,63 @@ internal static class ChartBuilder
             }
         }
 
-        AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush, resetMarkers, promptScreenPoints);
+        AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush, resetMarkers, promptHoverPoints);
 
-        return host;
+        return new ChartBuildResult(element, usageGroup, promptGroup);
+    }
+
+    // Height of the small bars strip drawn below the main chart for the
+    // "Nuevos" prompt view — enough to read bar heights at a glance without
+    // competing for space with the usage chart above it.
+    private const double PromptBarsPanelHeight = 34;
+
+    /// <summary>
+    /// A compact "volume pane" style strip, same width/x-axis mapping as
+    /// the main chart above it (padLeft/padRight/plotWidth line up exactly)
+    /// so each bar sits under its corresponding moment in time — structurally
+    /// separate from the usage chart's own canvas specifically so bars can
+    /// never visually overlap the usage line/fill, no matter how tall a
+    /// spike gets.
+    /// </summary>
+    private static FrameworkElement BuildPromptBarsPanel(
+        List<(DateTimeOffset At, int Delta)> series, double width, double height,
+        Brush barBrush, DateTimeOffset minTime, double spanSeconds, double padLeft, double padRight)
+    {
+        var panel = new Grid { Width = width, Height = height };
+        var plotWidth = Math.Max(1, width - padLeft - padRight);
+        var max = Math.Max(1, series.Max(p => p.Delta));
+
+        // Leaves headroom at the top for the "(máx N)" label so a full-height
+        // bar never sits directly under it.
+        const double topPad = 12;
+        var barAreaHeight = height - topPad;
+        var barWidth = Math.Clamp(plotWidth / Math.Max(1, series.Count) * 0.6, 2, 10);
+
+        foreach (var (at, delta) in series)
+        {
+            var x = padLeft + plotWidth * ((at - minTime).TotalSeconds / spanSeconds);
+            var barHeight = Math.Max(1.5, barAreaHeight * Math.Clamp(delta / (double)max, 0, 1));
+            panel.Children.Add(new Rectangle
+            {
+                Width = barWidth,
+                Height = barHeight,
+                Fill = barBrush,
+                RadiusX = 1, RadiusY = 1,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(x - barWidth / 2, height - barHeight, 0, 0),
+            });
+        }
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = Strings.F("stats.prompts.legend", max),
+            Foreground = barBrush, Opacity = 0.85, FontSize = 9, FontWeight = FontWeights.Medium,
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 0, padRight, 0),
+        });
+
+        return panel;
     }
 
     /// <summary>
@@ -391,7 +483,12 @@ internal static class ChartBuilder
                     ? promptCountStore.GetAgentTotalSeries(agent, since).Select(p => (p.At, p.Total)).ToList()
                     : promptCountStore.GetAgentDeltaSeries(agent, since);
             }
-            var chart = Build(points, chartWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"), resets, promptSeries, promptLineBrush);
+            // "Totales" reads naturally as a running line (see Build's own
+            // reasoning); "Nuevos" per-interval deltas read naturally as
+            // bars instead, and — critically — bars drawn ON the usage
+            // chart would constantly fight it for space, so that mode moves
+            // to a separate strip below (promptsAsBars: true).
+            var chart = Build(points, chartWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"), resets, promptSeries, promptLineBrush, promptsAsBars: !useTotalPrompts);
 
             if (viewportWidth is { } vw && onZoom is not null)
             {
@@ -401,7 +498,7 @@ internal static class ChartBuilder
                     Height = chartHeight,
                     HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                    Content = chart,
+                    Content = chart.Element,
                 };
                 scroller.PreviewMouseWheel += (s, e) =>
                 {
@@ -412,12 +509,60 @@ internal static class ChartBuilder
             }
             else
             {
-                block.Children.Add(chart);
+                block.Children.Add(chart.Element);
+            }
+
+            // Only worth showing when there's actually a second series to
+            // distinguish from the usage line — a service with no coding
+            // agent data (Grok, or simply no prompts yet) just gets the
+            // plain chart, same as before this existed.
+            if (chart.PromptGroup is not null)
+            {
+                block.Children.Add(BuildChartLegend(lineBrush, promptLineBrush!, chart.UsageGroup, chart.PromptGroup, textSecondary));
             }
 
             container.Children.Add(block);
         }
         return container;
+    }
+
+    /// <summary>
+    /// Two clickable chips under a chart — clicking one toggles that
+    /// series' Visibility on the actual chart elements Build() exposed via
+    /// <see cref="ChartBuildResult"/>, so this needs no chart-rebuild or
+    /// external state to work. Doubles as a plain (inert but still
+    /// legible) legend on the static Telegram image, since nothing there
+    /// ever generates a click.
+    /// </summary>
+    private static FrameworkElement BuildChartLegend(Brush usageBrush, Brush promptBrush, UIElement usageTarget, UIElement promptTarget, Brush textSecondary)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        row.Children.Add(BuildLegendChip(Strings.T("stats.legend.usage"), usageBrush, usageTarget, textSecondary));
+        row.Children.Add(BuildLegendChip(Strings.T("stats.legend.prompts"), promptBrush, promptTarget, textSecondary));
+        return row;
+    }
+
+    private static FrameworkElement BuildLegendChip(string label, Brush dotColor, UIElement target, Brush textSecondary)
+    {
+        var dot = new Ellipse { Width = 8, Height = 8, Fill = dotColor, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
+        var text = new TextBlock { Text = label, FontSize = 10, Foreground = textSecondary, VerticalAlignment = VerticalAlignment.Center };
+        var chip = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 14, 0),
+            Cursor = Cursors.Hand,
+        };
+        chip.Children.Add(dot);
+        chip.Children.Add(text);
+        chip.MouseLeftButtonUp += (s, e) =>
+        {
+            var isVisible = target.Visibility != Visibility.Collapsed;
+            target.Visibility = isVisible ? Visibility.Collapsed : Visibility.Visible;
+            var fadedOpacity = isVisible ? 0.35 : 1.0;
+            dot.Opacity = fadedOpacity;
+            text.Opacity = fadedOpacity;
+        };
+        return chip;
     }
 
     /// <summary>

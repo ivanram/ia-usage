@@ -318,8 +318,10 @@ public sealed class TelegramBotService
             };
 
             var since = DateTimeOffset.UtcNow.AddHours(-24);
+            var promptLineBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x8B, 0x5C, 0xF6));
             var blocks = ChartBuilder.BuildServiceBlocks(serviceNames, _historyStore, since,
-                StatsImageWidth - 48, StatsChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush);
+                StatsImageWidth - 48, StatsChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
+                promptCountStore: _promptCountStore, promptLineBrush: promptLineBrush);
 
             var content = new StackPanel();
             content.Children.Add(title);

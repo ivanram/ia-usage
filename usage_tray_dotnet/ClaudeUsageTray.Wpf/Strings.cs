@@ -109,6 +109,8 @@ internal static class Strings
         ["stats.dashboard.tasks"] = "{0} tareas",
         ["stats.dashboard.totals.title"] = "Totales (histórico completo)",
         ["stats.dashboard.range.title"] = "Este periodo",
+        ["stats.legend.usage"] = "Uso de IA",
+        ["stats.legend.prompts"] = "Prompts",
         ["stats.noservices"] = "No hay servicios activos.",
 
         ["tray.tooltip.starting"] = "{0}: iniciando...",
@@ -255,6 +257,8 @@ internal static class Strings
         ["stats.dashboard.tasks"] = "{0} tasks",
         ["stats.dashboard.totals.title"] = "Totals (full history)",
         ["stats.dashboard.range.title"] = "This period",
+        ["stats.legend.usage"] = "AI usage",
+        ["stats.legend.prompts"] = "Prompts",
         ["stats.noservices"] = "No active services.",
 
         ["tray.tooltip.starting"] = "{0}: starting...",

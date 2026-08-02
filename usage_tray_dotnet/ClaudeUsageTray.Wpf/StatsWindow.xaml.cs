@@ -23,12 +23,16 @@ public partial class StatsWindow : Window
     // height is left for the charts themselves. Approximate on purpose:
     // being a few pixels off just means an almost-imperceptible sliver of
     // scroll slack, not a layout bug.
-    private const double PerServiceChromeHeight = 48;
+    // +40 over the original 48 to cover the toggle-legend row now under
+    // each chart (and, in "Nuevos" prompt mode, the extra bars sub-panel) —
+    // approximate on purpose, same as before.
+    private const double PerServiceChromeHeight = 88;
     private const double AnchorGap = 12;
     // Wider than the popup-matching width, per the user's request — kept
     // relative to the popup's own width so it scales sensibly regardless
-    // of DPI/monitor.
-    private const double WidthMultiplier = 1.6;
+    // of DPI/monitor. Bumped another 50% on top of that (1.6 -> 2.4) to fit
+    // the per-agent dashboard cards' stats on one row instead of stacked.
+    private const double WidthMultiplier = 2.4;
     // The default height used to match the popup's exactly; once the range
     // tabs, prompt-mode toggle, and dashboard rows were added, that no
     // longer left enough room for even one chart without scrolling — this
@@ -562,9 +566,12 @@ public partial class StatsWindow : Window
             Foreground = textPrimary,
             Margin = new Thickness(0, 0, 0, 6),
         });
-        stack.Children.Add(BuildDashboardStatLine("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
-        stack.Children.Add(BuildDashboardStatLine("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
-        stack.Children.Add(BuildDashboardStatLine("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary));
+
+        var statsRow = new StackPanel { Orientation = Orientation.Horizontal };
+        statsRow.Children.Add(BuildDashboardStatChip("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
+        statsRow.Children.Add(BuildDashboardStatChip("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
+        statsRow.Children.Add(BuildDashboardStatChip("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary, isLast: true));
+        stack.Children.Add(statsRow);
 
         return new Border
         {
@@ -577,11 +584,11 @@ public partial class StatsWindow : Window
         };
     }
 
-    private static FrameworkElement BuildDashboardStatLine(string glyph, string text, Brush foreground)
+    private static FrameworkElement BuildDashboardStatChip(string glyph, string text, Brush foreground, bool isLast = false)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
-        row.Children.Add(new TextBlock { Text = glyph, FontSize = 11, Margin = new Thickness(0, 0, 6, 0) });
-        row.Children.Add(new TextBlock { Text = text, FontSize = 11, Foreground = foreground });
-        return row;
+        var chip = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, isLast ? 0 : 14, 0) };
+        chip.Children.Add(new TextBlock { Text = glyph, FontSize = 11, Margin = new Thickness(0, 0, 5, 0) });
+        chip.Children.Add(new TextBlock { Text = text, FontSize = 11, Foreground = foreground });
+        return chip;
     }
 }
