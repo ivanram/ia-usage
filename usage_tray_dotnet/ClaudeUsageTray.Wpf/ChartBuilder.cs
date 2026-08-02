@@ -126,7 +126,7 @@ internal static class ChartBuilder
             return new Point(x, y);
         }).ToList();
 
-        var linePath = BuildSmoothPath(screenPoints);
+        var linePath = BuildLinePath(screenPoints);
 
         var fillFigure = linePath.Figures[0].Clone();
         fillFigure.Segments.Add(new LineSegment(new Point(screenPoints[^1].X, padTop + plotHeight), true));
@@ -301,32 +301,27 @@ internal static class ChartBuilder
     }
 
     /// <summary>
-    /// Catmull-Rom spline through the points, converted to cubic Bezier
-    /// segments — smooth without overshooting past 0/100%. Plain Catmull-Rom
-    /// tangents are sized from the NEIGHBORING segments too, so a sharp real
-    /// jump right next to a flat run (a big usage jump followed by several
-    /// flat readings, say) produced a visible hump/dip that didn't
-    /// correspond to any actual data point — clamping each control point's
-    /// Y to its own segment's endpoint range keeps the curve from swinging
-    /// past the two values it's actually connecting.
+    /// Plain straight segments between consecutive points. A Catmull-Rom
+    /// smoothed spline was tried here (twice), but usage history has wildly
+    /// uneven gaps between readings — a burst of samples a minute apart,
+    /// then the app closed overnight leaving an 11-hour silent gap before
+    /// the next one — and Catmull-Rom sizes its tangents from the
+    /// surrounding points' TIME spacing too, not just their values.
+    /// Clamping the Y side of that (the previous attempt) didn't stop it:
+    /// next to one of these lopsided gaps the tangent's X component
+    /// overshoots so far that the curve visibly loops forward and back
+    /// before reaching the next real point — a spike that isn't in the
+    /// data at all, confirmed by reading the raw history.db rows straight
+    /// (perfectly monotonic, no real dip). Straight lines can't produce
+    /// that failure mode by construction, at the cost of visible corners
+    /// at each reading instead of a smoothed curve.
     /// </summary>
-    private static PathGeometry BuildSmoothPath(List<Point> points)
+    private static PathGeometry BuildLinePath(List<Point> points)
     {
         var figure = new PathFigure { StartPoint = points[0] };
-        for (var i = 0; i < points.Count - 1; i++)
+        for (var i = 1; i < points.Count; i++)
         {
-            var p0 = i == 0 ? points[i] : points[i - 1];
-            var p1 = points[i];
-            var p2 = points[i + 1];
-            var p3 = i + 2 < points.Count ? points[i + 2] : p2;
-
-            var segMinY = Math.Min(p1.Y, p2.Y);
-            var segMaxY = Math.Max(p1.Y, p2.Y);
-
-            var c1 = new Point(p1.X + (p2.X - p0.X) / 6, Math.Clamp(p1.Y + (p2.Y - p0.Y) / 6, segMinY, segMaxY));
-            var c2 = new Point(p2.X - (p3.X - p1.X) / 6, Math.Clamp(p2.Y - (p3.Y - p1.Y) / 6, segMinY, segMaxY));
-
-            figure.Segments.Add(new BezierSegment(c1, c2, p2, true));
+            figure.Segments.Add(new LineSegment(points[i], true));
         }
         return new PathGeometry(new[] { figure });
     }
