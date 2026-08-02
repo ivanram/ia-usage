@@ -507,10 +507,24 @@ public partial class StatsWindow : Window
             _ => "stats.range.today",
         });
 
+        // All range-scoped cards first, then all Totales cards — grouped by
+        // scope rather than interleaved per agent, so the row reads as two
+        // clear clusters instead of alternating back and forth.
+        var tasksByAgent = DashboardAgents.ToDictionary(a => a, GetAgentTasks);
+
         foreach (var agent in DashboardAgents)
         {
-            var tasks = GetAgentTasks(agent);
+            var inRange = tasksByAgent[agent].Where(t => t.LastActivity >= since).ToList();
+            var rangeProjectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var rangeTaskCount = inRange.Count;
+            var rangePromptCount = _promptCountStore.GetAgentTotalInRange(agent, since);
+            if (!(rangePromptCount == 0 && rangeProjectCount == 0 && rangeTaskCount == 0))
+                wrap.Children.Add(BuildDashboardCard(agent, rangeLabel, rangePromptCount, rangeProjectCount, rangeTaskCount, textPrimary, textSecondary, cardBackground));
+        }
 
+        foreach (var agent in DashboardAgents)
+        {
+            var tasks = tasksByAgent[agent];
             var totalProjectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var totalTaskCount = tasks.Count;
             // Latest known cumulative total per project — each snapshot
@@ -520,13 +534,6 @@ public partial class StatsWindow : Window
             var totalPromptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
             if (!(totalPromptCount == 0 && totalProjectCount == 0 && totalTaskCount == 0))
                 wrap.Children.Add(BuildDashboardCard(agent, totalsLabel, totalPromptCount, totalProjectCount, totalTaskCount, textPrimary, textSecondary, totalsCardBackground));
-
-            var inRange = tasks.Where(t => t.LastActivity >= since).ToList();
-            var rangeProjectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            var rangeTaskCount = inRange.Count;
-            var rangePromptCount = _promptCountStore.GetAgentTotalInRange(agent, since);
-            if (!(rangePromptCount == 0 && rangeProjectCount == 0 && rangeTaskCount == 0))
-                wrap.Children.Add(BuildDashboardCard(agent, rangeLabel, rangePromptCount, rangeProjectCount, rangeTaskCount, textPrimary, textSecondary, cardBackground));
         }
 
         return wrap.Children.Count > 0 ? wrap : null;
