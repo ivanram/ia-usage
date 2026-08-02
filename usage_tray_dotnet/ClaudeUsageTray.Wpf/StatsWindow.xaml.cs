@@ -16,6 +16,10 @@ public partial class StatsWindow : Window
     // sensibly regardless of DPI/monitor.
     private const double WidthMultiplier = 1.5;
 
+    private const double MinZoom = 1.0;
+    private const double MaxZoom = 4.0;
+    private const double ZoomStep = 0.25;
+
     private readonly List<string> _serviceNames;
     private readonly UsageHistoryStore _historyStore;
 
@@ -25,6 +29,7 @@ public partial class StatsWindow : Window
     private readonly double _defaultTop;
 
     private DispatcherTimer? _resizeDebounceTimer;
+    private double _zoomLevel = MinZoom;
 
     // Same reasoning as SettingsWindow's taskbar icon fields — built once
     // and kept alive for the window's lifetime, sent to Windows via
@@ -89,6 +94,19 @@ public partial class StatsWindow : Window
         Render();
     }
 
+    /// <summary>
+    /// Wired to every chart's mouse wheel (see ChartBuilder.BuildServiceBlocks) —
+    /// one shared zoom level for all services keeps them comparable/aligned
+    /// instead of each drifting to its own scale.
+    /// </summary>
+    private void OnChartZoom(int direction)
+    {
+        var newZoom = Math.Clamp(_zoomLevel + direction * ZoomStep, MinZoom, MaxZoom);
+        if (Math.Abs(newZoom - _zoomLevel) < 0.001) return;
+        _zoomLevel = newZoom;
+        Render();
+    }
+
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
         var hwnd = new WindowInteropHelper(this).Handle;
@@ -106,6 +124,8 @@ public partial class StatsWindow : Window
         Height = _defaultHeight;
         Left = _defaultLeft;
         Top = _defaultTop;
+        _zoomLevel = MinZoom;
+        Render();
     }
 
     /// <summary>
@@ -162,12 +182,16 @@ public partial class StatsWindow : Window
         // disabled, so its ActualWidth already tracks the window's current
         // available content width — reading it here (instead of a fixed
         // constant) is what makes the chart actually redraw wider/narrower
-        // when the user resizes the window.
-        var chartWidth = ContentHost.ActualWidth > 0 ? ContentHost.ActualWidth : _defaultWidth - 40;
+        // when the user resizes the window. Zooming in scales the chart's
+        // own (content) width past that viewport, which is what gives each
+        // chart's own horizontal scrollbar something to do.
+        var viewportWidth = ContentHost.ActualWidth > 0 ? ContentHost.ActualWidth : _defaultWidth - 40;
+        var chartWidth = viewportWidth * _zoomLevel;
 
         var since = DateTimeOffset.UtcNow.AddHours(-24);
         var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since,
-            chartWidth, ChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush);
+            chartWidth, ChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
+            viewportWidth, OnChartZoom);
         ContentHost.Children.Add(blocks);
     }
 }

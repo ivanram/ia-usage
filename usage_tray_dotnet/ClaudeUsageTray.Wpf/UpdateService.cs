@@ -151,7 +151,7 @@ internal static class UpdateService
             if (settings.LastUpdateCheckAt is { } lastCheck && DateTime.Now - lastCheck < minInterval)
             {
                 Log($"CheckAndPromptAsync: throttled, {(DateTime.Now - lastCheck).TotalSeconds:0}s since last check (min {minInterval.TotalSeconds:0}s)");
-                if (manualCheck) AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T("dialog.toosoon.message"));
+                if (manualCheck) AppDialogWindow.ShowInfo("", Strings.T("dialog.toosoon.message"));
                 return;
             }
 
@@ -168,7 +168,7 @@ internal static class UpdateService
                 if (manualCheck)
                 {
                     var messageKey = rateLimited ? "dialog.ratelimited.message" : "dialog.checkfailed.message";
-                    AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T(messageKey));
+                    AppDialogWindow.ShowInfo("", Strings.T(messageKey));
                 }
                 return;
             }
@@ -177,12 +177,12 @@ internal static class UpdateService
             Log($"current={current} latest={version}");
             if (!IsNewer(version, current))
             {
-                if (manualCheck) AppDialogWindow.ShowInfo(Strings.T("app.name"), Strings.T("dialog.uptodate.message"));
+                if (manualCheck) AppDialogWindow.ShowInfo("", Strings.T("dialog.uptodate.message"));
                 return;
             }
 
             var choice = AppDialogWindow.ShowUpdatePrompt(
-                Strings.F("dialog.update.title", Strings.T("app.name")),
+                Strings.T("dialog.update.title"),
                 Strings.F("dialog.update.message", $"{version.Major}.{version.Minor}.{version.Build}"));
 
             if (choice == DialogChoice.Later)

@@ -2,8 +2,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using MaterialDesignThemes.Wpf;
 
@@ -37,6 +39,16 @@ public partial class PopupWindow : Window
     private Button? _refreshButton;
     private bool _isRefreshing;
 
+    // Same 18px-native-draw approach as SettingsWindow/AppDialogWindow's
+    // caption icon — built once and reused for the loading state's small
+    // app-identity header, since there's no window chrome here to hang a
+    // real WM_SETICON icon off of.
+    private static readonly Lazy<BitmapSource> AppIconSource = new(() =>
+    {
+        using var icon = IconFactory.BuildRobotIcon(18);
+        return Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+    });
+
     /// <summary>Null = the default percent-based green/amber/red bars. A hex string = every bar uses that one flat color regardless of percent.</summary>
     public string? FlatBarColorHex { get; set; }
     public bool AnimationsEnabled { get; set; } = true;
@@ -57,7 +69,32 @@ public partial class PopupWindow : Window
         InitializeComponent();
     }
 
-    public void Render(IEnumerable<UsageSnapshot> snapshots, bool hasAnyEnabled, DateTime? lastUpdated)
+    /// <summary>
+    /// Forces one real Show()+Loaded layout pass, off-screen, right after
+    /// construction — the same root cause as this session's invisible
+    /// 100%-toast bug: a manual Measure() against a Window that has never
+    /// actually been shown (as ShowNearCursor does, to size itself before
+    /// its first real appearance) is unreliable until the window's visual
+    /// tree and DynamicResource-bound templates have gone through one
+    /// genuine layout pass. Warming that up here, while nobody's looking,
+    /// means the user's actual first hover/click is no longer that fresh,
+    /// untested first pass — which is what made it take several tries.
+    /// </summary>
+    public void WarmUp()
+    {
+        Left = -32000;
+        Top = -32000;
+        Show();
+        Loaded += OnWarmUpLoaded;
+    }
+
+    private void OnWarmUpLoaded(object? sender, RoutedEventArgs e)
+    {
+        Loaded -= OnWarmUpLoaded;
+        Hide();
+    }
+
+    public void Render(IEnumerable<UsageSnapshot> snapshots, bool hasAnyEnabled, DateTime? lastUpdated, int totalEnabled = 0)
     {
         ApplyThemeColors();
 
@@ -76,13 +113,24 @@ public partial class PopupWindow : Window
         }
         else if (list.Count == 0)
         {
-            var spinner = BuildSpinner();
-            spinner.Width = contentWidth;
-            ContentHost.Children.Add(spinner);
+            // Nothing has come back at all yet — there's no service block
+            // on screen to give the panel any context, so this is the one
+            // state that needs its own "yes, this is [app name] and it's
+            // working on it" identity, not just a bare spinner.
+            var loading = BuildLoadingState(contentWidth);
+            ContentHost.Children.Add(loading);
         }
         else
         {
             var column = new StackPanel { Width = contentWidth };
+            if (list.Count < totalEnabled)
+            {
+                // Some services already have real data — from here on a
+                // real ready/total progress bar is more honest than a
+                // generic spinner, since we now actually know how far along
+                // the batch is.
+                column.Children.Add(BuildLoadingMoreIndicator(contentWidth, list.Count, totalEnabled));
+            }
             foreach (var snap in list)
             {
                 column.Children.Add(BuildServiceBlock(snap));
@@ -343,6 +391,97 @@ public partial class PopupWindow : Window
             Margin = new Thickness(0, 12, 0, 12),
             Foreground = _textSecondary,
         };
+    }
+
+    private FrameworkElement BuildLoadingState(double width)
+    {
+        var stack = new StackPanel { Width = width, Margin = new Thickness(0, 10, 0, 10) };
+
+        var header = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 16),
+        };
+        header.Children.Add(new Image { Width = 20, Height = 20, Margin = new Thickness(0, 0, 8, 0), Source = AppIconSource.Value });
+        header.Children.Add(new TextBlock
+        {
+            Text = Strings.T("app.name"),
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = _textPrimary,
+        });
+        stack.Children.Add(header);
+
+        stack.Children.Add(BuildSpinner());
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = Strings.T("popup.loading"),
+            FontSize = 12,
+            Foreground = _textSecondary,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 4, 0, 0),
+        });
+
+        return stack;
+    }
+
+    /// <summary>
+    /// A slim "Actualizando… (X/Y)" strip shown above whichever services
+    /// already have data, while the rest are still being fetched — a real
+    /// measured fraction, not an indeterminate spinner, since by this point
+    /// we genuinely know how many of the enabled services are left.
+    /// </summary>
+    private FrameworkElement BuildLoadingMoreIndicator(double width, int ready, int total)
+    {
+        var stack = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = Strings.F("popup.loading.progress", Strings.T("popup.loading"), ready, total),
+            FontSize = 11,
+            Foreground = _textSecondary,
+            Margin = new Thickness(0, 0, 0, 6),
+        });
+
+        const double height = 4;
+        var grid = new Grid { Height = height };
+        var track = new Border
+        {
+            CornerRadius = new CornerRadius(height / 2),
+            Background = (Brush)new BrushConverter().ConvertFrom("#26808080")!,
+        };
+        var fill = new Border
+        {
+            CornerRadius = new CornerRadius(height / 2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Width = 0,
+            Background = (Brush)FindResource("MaterialDesign.Brush.Primary"),
+        };
+        grid.Children.Add(track);
+        grid.Children.Add(fill);
+        stack.Children.Add(grid);
+
+        var targetWidth = total > 0 ? width * ready / total : 0;
+        if (AnimationsEnabled)
+        {
+            var anim = new DoubleAnimation
+            {
+                From = 0,
+                To = targetWidth,
+                Duration = TimeSpan.FromMilliseconds(400),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            };
+            fill.BeginAnimation(WidthProperty, anim);
+        }
+        else
+        {
+            fill.Width = targetWidth;
+        }
+
+        return stack;
     }
 
     private FrameworkElement BuildSpinner()

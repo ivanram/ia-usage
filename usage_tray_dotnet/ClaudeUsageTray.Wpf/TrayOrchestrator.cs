@@ -83,6 +83,7 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.RefreshRequested += async (s, e) => await RefreshAllAsync();
         _popup.SettingsRequested += (s, e) => { _popup.Hide(); OpenSettings(); };
         _popup.StatsRequested += (s, e) => OpenStats();
+        _popup.WarmUp();
 
         ApplyTelegramSettings();
         ApplyRefreshInterval();
@@ -203,7 +204,7 @@ public sealed class TrayOrchestrator : IDisposable
         // service isn't ready yet it's simply left out; RefreshAllAsync
         // re-renders the open popup the moment its data arrives.
         var ready = enabled.Where(p => _lastSnapshots.ContainsKey(p.Name)).Select(p => _lastSnapshots[p.Name]);
-        _popup.Render(ready, hasAnyEnabled: enabled.Count > 0, lastUpdated: _lastUpdated);
+        _popup.Render(ready, hasAnyEnabled: enabled.Count > 0, lastUpdated: _lastUpdated, totalEnabled: enabled.Count);
         _popup.ShowNearCursor();
     }
 
@@ -546,7 +547,7 @@ public sealed class TrayOrchestrator : IDisposable
                 if (_popup.IsVisible)
                 {
                     var ready = enabled.Where(p => _lastSnapshots.ContainsKey(p.Name)).Select(p => _lastSnapshots[p.Name]);
-                    _popup.Render(ready, hasAnyEnabled: true, lastUpdated: _lastUpdated);
+                    _popup.Render(ready, hasAnyEnabled: true, lastUpdated: _lastUpdated, totalEnabled: enabled.Count);
                 }
             }
 

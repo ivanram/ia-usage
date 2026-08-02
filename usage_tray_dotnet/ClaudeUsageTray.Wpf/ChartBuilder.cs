@@ -221,11 +221,21 @@ internal static class ChartBuilder
     /// vertically — used both by the desktop Stats window (a timeline reads
     /// naturally growing downward) and the Telegram /stats image (which is
     /// just scrolled like any other photo message).
+    ///
+    /// <paramref name="viewportWidth"/> and <paramref name="onZoom"/> are
+    /// only used by the interactive Stats window: when set, each chart is
+    /// built at <paramref name="chartWidth"/> (which the caller may have
+    /// already scaled up by its own zoom factor) but wrapped in a
+    /// horizontally-scrollable viewport fixed at <paramref name="viewportWidth"/>,
+    /// with mouse-wheel-over-chart reporting a zoom-in/out direction back to
+    /// the caller instead of scrolling. Telegram's image rendering leaves
+    /// both null and gets the old plain, unwrapped chart.
     /// </summary>
     public static StackPanel BuildServiceBlocks(
         IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
         double chartWidth, double chartHeight,
-        Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush)
+        Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush,
+        double? viewportWidth = null, Action<int>? onZoom = null)
     {
         var container = new StackPanel();
         for (var i = 0; i < serviceNames.Count; i++)
@@ -243,7 +253,28 @@ internal static class ChartBuilder
 
             var points = historyStore.GetHistory(serviceName, since);
             var chart = Build(points, chartWidth, chartHeight, lineBrush, fillBrush, gridBrush, textSecondary, Strings.T("stats.empty"));
-            block.Children.Add(chart);
+
+            if (viewportWidth is { } vw && onZoom is not null)
+            {
+                var scroller = new ScrollViewer
+                {
+                    Width = vw,
+                    Height = chartHeight,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    Content = chart,
+                };
+                scroller.PreviewMouseWheel += (s, e) =>
+                {
+                    onZoom(Math.Sign(e.Delta));
+                    e.Handled = true;
+                };
+                block.Children.Add(scroller);
+            }
+            else
+            {
+                block.Children.Add(chart);
+            }
 
             container.Children.Add(block);
         }
@@ -269,7 +300,16 @@ internal static class ChartBuilder
             new Point(0, 0), new Point(1, 0));
     }
 
-    /// <summary>Catmull-Rom spline through the points, converted to cubic Bezier segments — smooth without overshooting past 0/100%.</summary>
+    /// <summary>
+    /// Catmull-Rom spline through the points, converted to cubic Bezier
+    /// segments — smooth without overshooting past 0/100%. Plain Catmull-Rom
+    /// tangents are sized from the NEIGHBORING segments too, so a sharp real
+    /// jump right next to a flat run (a big usage jump followed by several
+    /// flat readings, say) produced a visible hump/dip that didn't
+    /// correspond to any actual data point — clamping each control point's
+    /// Y to its own segment's endpoint range keeps the curve from swinging
+    /// past the two values it's actually connecting.
+    /// </summary>
     private static PathGeometry BuildSmoothPath(List<Point> points)
     {
         var figure = new PathFigure { StartPoint = points[0] };
@@ -280,8 +320,11 @@ internal static class ChartBuilder
             var p2 = points[i + 1];
             var p3 = i + 2 < points.Count ? points[i + 2] : p2;
 
-            var c1 = new Point(p1.X + (p2.X - p0.X) / 6, p1.Y + (p2.Y - p0.Y) / 6);
-            var c2 = new Point(p2.X - (p3.X - p1.X) / 6, p2.Y - (p3.Y - p1.Y) / 6);
+            var segMinY = Math.Min(p1.Y, p2.Y);
+            var segMaxY = Math.Max(p1.Y, p2.Y);
+
+            var c1 = new Point(p1.X + (p2.X - p0.X) / 6, Math.Clamp(p1.Y + (p2.Y - p0.Y) / 6, segMinY, segMaxY));
+            var c2 = new Point(p2.X - (p3.X - p1.X) / 6, Math.Clamp(p2.Y - (p3.Y - p1.Y) / 6, segMinY, segMaxY));
 
             figure.Segments.Add(new BezierSegment(c1, c2, p2, true));
         }

@@ -64,6 +64,20 @@
                 <DropShadowEffect BlurRadius="24" ShadowDepth="6" Direction="270" Opacity="0.28" Color="Black" />
             </Border.Effect>
             <StackPanel>
+                <!--
+                Borderless/topmost/ShowInTaskbar=False means this dialog has
+                no native title bar and no taskbar entry to identify it by —
+                without something branded inside the content itself, a user
+                who isn't looking straight at the screen when it pops up has
+                no way to tell which app is asking. Shown unconditionally,
+                independent of whatever TitleText says for this particular
+                dialog.
+                -->
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                    <Image x:Name="AppIcon" Width="18" Height="18" Margin="0,0,8,0" VerticalAlignment="Center" />
+                    <TextBlock x:Name="AppNameText" FontSize="12" FontWeight="Medium" Opacity="0.65"
+                               Foreground="{DynamicResource MaterialDesignBody}" VerticalAlignment="Center" />
+                </StackPanel>
                 <TextBlock x:Name="TitleText" FontSize="16" FontWeight="Medium"
                            Foreground="{DynamicResource MaterialDesignBody}"
                            TextWrapping="Wrap" Margin="0,0,0,10" />
