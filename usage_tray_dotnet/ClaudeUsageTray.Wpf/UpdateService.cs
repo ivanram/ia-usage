@@ -242,20 +242,30 @@ internal static class UpdateService
         var versionText = tag.TrimStart('v', 'V');
         if (!Version.TryParse(versionText, out var version)) return (null, null, false);
 
-        string? downloadUrl = null;
+        // Each release carries two assets: the framework-dependent "-fx"
+        // build (a few MB, needs the .NET 8 Desktop Runtime already on the
+        // machine — which this same running process is living proof of)
+        // and the older self-contained one (much bigger, no dependency) for
+        // machines without that runtime. Since this code only runs on a
+        // machine already running a .NET app, the "-fx" asset is always the
+        // right pick when present; the self-contained one is kept only as a
+        // fallback for releases published before this asset existed.
+        string? fxUrl = null;
+        string? fallbackUrl = null;
         if (root.TryGetProperty("assets", out var assets))
         {
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.GetProperty("name").GetString() ?? "";
-                if (name.StartsWith("ClaudeUsageTray", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                {
-                    downloadUrl = asset.GetProperty("browser_download_url").GetString();
-                    break;
-                }
+                if (!name.StartsWith("ClaudeUsageTray", StringComparison.OrdinalIgnoreCase) || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var url = asset.GetProperty("browser_download_url").GetString();
+                if (name.EndsWith("-fx.exe", StringComparison.OrdinalIgnoreCase)) fxUrl ??= url;
+                else fallbackUrl ??= url;
             }
         }
-        return (version, downloadUrl, false);
+        return (version, fxUrl ?? fallbackUrl, false);
     }
 
     private static async Task DownloadAndApplyAsync(string downloadUrl, Version version)

@@ -3,6 +3,8 @@ bin/
 obj/
 publish/
 publish_tmp/
+publish_fx/
+publish_sc/
 
 # Packaged EXEs are distributed as GitHub Release assets, not repo content
 Releases/
