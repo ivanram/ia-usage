@@ -139,6 +139,11 @@ internal static class Strings
         ["telegrambot.none"] = "No hay servicios activos todavía.",
         ["telegrambot.nodata"] = "sin datos",
         ["telegrambot.usebutton"] = "Usa el botón «{0}» o el comando /uso.",
+        ["telegrambot.apps.title"] = "🖥️ Apps en uso",
+        ["telegrambot.apps.none"] = "No se ha detectado ninguna app con ventana abierta.",
+        ["telegrambot.apps.foreground"] = "primer plano",
+        ["telegrambot.apps.active"] = "activa ({0}% CPU)",
+        ["telegrambot.apps.footer"] = "{0} apps abiertas",
     };
 
     private static readonly Dictionary<string, string> En = new()
@@ -255,5 +260,10 @@ internal static class Strings
         ["telegrambot.none"] = "No active services yet.",
         ["telegrambot.nodata"] = "no data",
         ["telegrambot.usebutton"] = "Use the \"{0}\" button or the /uso command.",
+        ["telegrambot.apps.title"] = "🖥️ Apps in use",
+        ["telegrambot.apps.none"] = "No app with an open window was detected.",
+        ["telegrambot.apps.foreground"] = "foreground",
+        ["telegrambot.apps.active"] = "active ({0}% CPU)",
+        ["telegrambot.apps.footer"] = "{0} apps open",
     };
 }

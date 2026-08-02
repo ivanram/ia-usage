@@ -61,6 +61,7 @@ public sealed class TelegramBotService
         {
             new BotCommand { Command = "uso", Description = "Ver uso de Claude y ChatGPT" },
             new BotCommand { Command = "stats", Description = "Ver gráfico de uso reciente" },
+            new BotCommand { Command = "apps", Description = "Ver apps en uso en el PC" },
         }, cancellationToken: ct);
 
         client.StartReceiving(
@@ -122,6 +123,13 @@ public sealed class TelegramBotService
                             caption: BuildReply(snapshots), parseMode: ParseMode.Markdown,
                             replyMarkup: Keyboard, cancellationToken: innerCt);
                     }
+                    return;
+                }
+
+                if (normalized == "/apps" || normalized.StartsWith("/apps@"))
+                {
+                    var apps = await RunningAppsHelper.GetRunningAppsAsync();
+                    await bot.SendMessage(chatId, BuildAppsReply(apps), parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
                     return;
                 }
 
@@ -337,4 +345,38 @@ public sealed class TelegramBotService
         var filled = Math.Clamp((int)Math.Round(percent / 100.0 * slots), 0, slots);
         return "[" + new string('█', filled) + new string('░', slots - filled) + "]";
     }
+
+    // Capped rather than sent in full — a very cluttered desktop could
+    // otherwise turn this into an unreadably long message.
+    private const int MaxAppsListed = 20;
+
+    /// <summary>
+    /// ▶️ marks whichever app is in the foreground right now; 🟢 marks any
+    /// other app whose CPU usage crossed the "active" threshold during the
+    /// sampling window (something churning in the background); 🤖 calls out
+    /// anything that looks like an AI app/tab by name, foreground or not.
+    /// </summary>
+    private static string BuildAppsReply(List<RunningAppsHelper.RunningApp> apps)
+    {
+        if (apps.Count == 0) return Strings.T("telegrambot.apps.none");
+
+        var lines = apps.Take(MaxAppsListed).Select(app =>
+        {
+            var marker = app.IsForeground ? "▶️" : app.IsActive ? "🟢" : "⚪";
+            var aiTag = RunningAppsHelper.IsAiApp(app) ? " 🤖" : "";
+            var status = app.IsForeground
+                ? Strings.T("telegrambot.apps.foreground")
+                : app.IsActive ? Strings.F("telegrambot.apps.active", (int)Math.Round(app.CpuPercent)) : null;
+            var suffix = status is null ? "" : $" — {status}";
+            return $"{marker} *{EscapeMarkdown(app.Name)}*{aiTag}{suffix}";
+        });
+
+        var header = $"{Strings.T("telegrambot.apps.title")}\n\n";
+        var footer = $"\n\n_{Strings.F("telegrambot.apps.footer", apps.Count)}_";
+        return header + string.Join("\n", lines) + footer;
+    }
+
+    /// <summary>Legacy Telegram Markdown treats these four characters as formatting — process/window names can contain any of them incidentally.</summary>
+    private static string EscapeMarkdown(string text) =>
+        text.Replace("_", "\\_").Replace("*", "\\*").Replace("`", "\\`").Replace("[", "\\[");
 }
