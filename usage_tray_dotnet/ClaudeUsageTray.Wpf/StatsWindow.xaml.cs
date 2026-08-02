@@ -52,8 +52,7 @@ public partial class StatsWindow : Window
 
     private readonly double _defaultWidth;
     private readonly double _defaultHeight;
-    private readonly double _defaultLeft;
-    private readonly double _defaultTop;
+    private readonly Rect _anchorBounds;
 
     private DispatcherTimer? _resizeDebounceTimer;
     private double _zoomLevel = MinZoom;
@@ -75,7 +74,12 @@ public partial class StatsWindow : Window
     /// at the moment Stats was opened from it — Stats opens just to its
     /// left by default, matching the popup's height exactly and sitting
     /// flush with its top edge, at a starting width the user can then
-    /// resize freely (see ResetSizeButton for getting back to this default).
+    /// resize freely. These are only the UNCLAMPED preferences though — the
+    /// window can end up bigger than a monitor's work area (especially
+    /// after the maximize feature raised the default height), so
+    /// <see cref="OnSourceInitialized"/> clamps the real Width/Height/Left/Top
+    /// once a window handle (and therefore DPI/monitor info) actually
+    /// exists, the same way <see cref="OnMaximizeClick"/> already does.
     /// </summary>
     public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, PromptCountStore promptCountStore, Rect anchorBounds)
     {
@@ -83,17 +87,16 @@ public partial class StatsWindow : Window
         _serviceNames = serviceNames;
         _historyStore = historyStore;
         _promptCountStore = promptCountStore;
+        _anchorBounds = anchorBounds;
         Title = Strings.T("stats.title");
 
         _defaultWidth = Math.Max(MinWidth, anchorBounds.Width * WidthMultiplier);
         _defaultHeight = Math.Max(MinHeight, anchorBounds.Height + ExtraDefaultHeight);
-        _defaultLeft = anchorBounds.Left - _defaultWidth - AnchorGap;
-        _defaultTop = anchorBounds.Top;
 
         Width = _defaultWidth;
         Height = _defaultHeight;
-        Left = _defaultLeft;
-        Top = _defaultTop;
+        Left = anchorBounds.Left - _defaultWidth - AnchorGap;
+        Top = anchorBounds.Top;
 
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
@@ -147,20 +150,59 @@ public partial class StatsWindow : Window
         DwmHelper.SetWindowIcon(hwnd, _smallTaskbarIcon.Handle, _bigTaskbarIcon.Handle);
         var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
         DwmHelper.SetTitleBarDarkMode(hwnd, isDark);
+
+        FitToWorkArea();
+    }
+
+    /// <summary>
+    /// The constructor's Width/Height/Left/Top are just a preference
+    /// ("as wide/tall as the popup suggests, sitting just to its left") —
+    /// on a small or oddly-shaped monitor that can land the window partly
+    /// or fully off-screen, which real window placement must never do.
+    /// This runs once the window has an hwnd (so DPI/monitor lookups are
+    /// reliable, same as <see cref="OnMaximizeClick"/>) and re-derives a
+    /// position that (a) fits entirely within the monitor's work area
+    /// under <see cref="_anchorBounds"/> and (b) still avoids the popup —
+    /// preferring the left side, falling back to the right side, and only
+    /// overlapping as an absolute last resort on a monitor too small for
+    /// both windows side by side.
+    /// </summary>
+    private void FitToWorkArea()
+    {
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var anchorCenterPhysical = new NativeScreenHelper.POINT
+        {
+            X = (int)((_anchorBounds.Left + _anchorBounds.Width / 2) * dpi.DpiScaleX),
+            Y = (int)((_anchorBounds.Top + _anchorBounds.Height / 2) * dpi.DpiScaleY),
+        };
+        var workArea = NativeScreenHelper.GetWorkAreaForPoint(anchorCenterPhysical);
+        var workLeft = workArea.Left / dpi.DpiScaleX;
+        var workTop = workArea.Top / dpi.DpiScaleY;
+        var workRight = workArea.Right / dpi.DpiScaleX;
+        var workBottom = workArea.Bottom / dpi.DpiScaleY;
+
+        var width = Math.Min(Width, workRight - workLeft);
+        var height = Math.Min(Height, workBottom - workTop);
+
+        var leftOfAnchor = _anchorBounds.Left - width - AnchorGap;
+        var rightOfAnchor = _anchorBounds.Right + AnchorGap;
+        double left;
+        if (leftOfAnchor >= workLeft)
+            left = leftOfAnchor;
+        else if (rightOfAnchor + width <= workRight)
+            left = rightOfAnchor;
+        else
+            left = Math.Max(workLeft, Math.Min(Left, workRight - width));
+
+        var top = Math.Max(workTop, Math.Min(Top, workBottom - height));
+
+        Width = width;
+        Height = height;
+        Left = left;
+        Top = top;
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
-
-    private void OnResetSizeClick(object sender, RoutedEventArgs e)
-    {
-        Width = _defaultWidth;
-        Height = _defaultHeight;
-        Left = _defaultLeft;
-        Top = _defaultTop;
-        _zoomLevel = MinZoom;
-        _isMaximized = false;
-        Render();
-    }
 
     /// <summary>
     /// Not a real OS maximize (no fullscreen) — "grandecita, pero no
@@ -355,7 +397,6 @@ public partial class StatsWindow : Window
 
         TitleTextBlock.Text = Strings.T("stats.title");
         TitleTextBlock.Foreground = textPrimary;
-        ResetSizeGlyph.Foreground = textSecondary;
         CloseGlyph.Foreground = textPrimary;
         // E922 "Maximize" / E923 "Restore" — same pair of glyphs a normal
         // Windows title bar swaps between.

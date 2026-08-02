@@ -52,10 +52,6 @@
         <Grid Grid.Row="0" Margin="20,0,10,0">
             <TextBlock x:Name="TitleTextBlock" Text="Estadísticas" FontSize="15" FontWeight="Medium" VerticalAlignment="Center" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                <Button x:Name="ResetSizeButton" Style="{StaticResource MiniCaptionButton}" Margin="0,0,2,0"
-                        Click="OnResetSizeClick" ToolTip="Restablecer tamaño">
-                    <TextBlock x:Name="ResetSizeGlyph" Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="11" />
-                </Button>
                 <Button x:Name="MaximizeButton" Style="{StaticResource MiniCaptionButton}" Margin="0,0,2,0"
                         Click="OnMaximizeClick" ToolTip="Maximizar">
                     <TextBlock x:Name="MaximizeGlyph" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
