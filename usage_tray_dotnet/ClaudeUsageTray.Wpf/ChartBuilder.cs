@@ -43,13 +43,13 @@ internal static class ChartBuilder
         Brush? promptLineBrush = null,
         bool promptsAsBars = false)
     {
-        var host = new Grid { Width = width, Height = height };
         var usageGroup = new Grid();
-        host.Children.Add(usageGroup);
 
         if (points.Count < 2)
         {
-            host.Children.Add(new TextBlock
+            var emptyHost = new Grid { Width = width, Height = height };
+            emptyHost.Children.Add(usageGroup);
+            emptyHost.Children.Add(new TextBlock
             {
                 Text = emptyMessage,
                 Foreground = textBrush,
@@ -61,7 +61,7 @@ internal static class ChartBuilder
                 VerticalAlignment = VerticalAlignment.Center,
                 MaxWidth = width - 32,
             });
-            return new ChartBuildResult(host, usageGroup, null, 0);
+            return new ChartBuildResult(emptyHost, usageGroup, null, 0);
         }
 
         // padLeft leaves room for the "0%/50%/100%" axis labels; padBottom
@@ -71,6 +71,19 @@ internal static class ChartBuilder
         const double padTop = 18, padBottom = 16, padLeft = 30, padRight = 6;
         var plotWidth = Math.Max(1, width - padLeft - padRight);
         var plotHeight = Math.Max(1, height - padTop - padBottom);
+
+        // Bars for the "Nuevos" prompt view grow directly out of the usage
+        // chart's own 0% baseline (padTop + plotHeight) instead of living in
+        // a detached panel — so the host itself needs to be taller than the
+        // requested `height` to have room for them, decided upfront since
+        // everything below (gridlines, x-axis labels) needs to know about it.
+        var willDrawBars = promptsAsBars && promptLineBrush is not null && promptSeries is { Count: > 0 }
+            && promptSeries.Any(p => p.At >= points[0].RecordedAt && p.At <= points[^1].RecordedAt);
+        var barsHeight = willDrawBars ? PromptBarsHeight : 0;
+        var baselineY = padTop + plotHeight;
+
+        var host = new Grid { Width = width, Height = height + barsHeight };
+        host.Children.Add(usageGroup);
 
         foreach (var pct in new[] { 0, 50, 100 })
         {
@@ -132,7 +145,10 @@ internal static class ChartBuilder
             var x = padLeft + plotWidth * ((gridCursor - minTime).TotalSeconds / spanSeconds);
             host.Children.Add(new Line
             {
-                X1 = x, X2 = x, Y1 = padTop, Y2 = padTop + plotHeight,
+                // Extends through the bars strip too (when present) so the
+                // gridlines visually tie the two series to one shared
+                // timeline instead of looking like two unrelated charts.
+                X1 = x, X2 = x, Y1 = padTop, Y2 = baselineY + barsHeight,
                 Stroke = gridBrush,
                 StrokeThickness = 1,
                 StrokeDashArray = new DoubleCollection { 2, 3 },
@@ -149,7 +165,7 @@ internal static class ChartBuilder
                     Width = labelWidth, TextAlignment = TextAlignment.Center,
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(x - labelWidth / 2, padTop + plotHeight + 3, 0, 0),
+                    Margin = new Thickness(x - labelWidth / 2, baselineY + barsHeight + 3, 0, 0),
                 });
                 lastLabelX = x;
             }
@@ -217,25 +233,19 @@ internal static class ChartBuilder
         var promptHoverPoints = relevantPrompts.Select(p =>
             (new Point(padLeft + plotWidth * ((p.At - minTime).TotalSeconds / spanSeconds), 0.0), p.Delta)).ToList();
 
-        FrameworkElement element = host;
         UIElement? promptGroup = null;
 
         // "Totales" (cumulative) stays an overlaid line on the same canvas
         // as the usage chart, so a jump in usage can be visually correlated
         // with the prompt volume that caused it. "Nuevos" (per-interval
-        // deltas) reads much better as vertical bars — but bars drawn on
-        // top of the usage fill would constantly clash with it, so those go
-        // in a separate strip below instead (see BuildPromptBarsPanel).
+        // deltas) reads much better as vertical bars, growing straight out
+        // of the usage chart's own 0% baseline (see baselineY/barsHeight
+        // above) rather than floating in a disconnected panel with a gap.
         if (relevantPrompts.Count > 0 && promptLineBrush is not null)
         {
             if (promptsAsBars)
             {
-                var barsPanel = BuildPromptBarsPanel(relevantPrompts, width, PromptBarsPanelHeight, promptLineBrush, minTime, spanSeconds, padLeft, padRight);
-                var stack = new StackPanel();
-                stack.Children.Add(host);
-                stack.Children.Add(barsPanel);
-                element = stack;
-                promptGroup = barsPanel;
+                promptGroup = DrawPromptBars(host, relevantPrompts, baselineY, barsHeight, promptLineBrush, minTime, spanSeconds, plotWidth, padLeft, padRight);
             }
             else
             {
@@ -289,42 +299,40 @@ internal static class ChartBuilder
 
         AddHoverReadout(host, screenPoints, points, width, lineBrush, textBrush, resetMarkers, promptHoverPoints);
 
-        var extraHeight = ReferenceEquals(element, host) ? 0 : PromptBarsPanelHeight;
-        return new ChartBuildResult(element, usageGroup, promptGroup, extraHeight);
+        return new ChartBuildResult(host, usageGroup, promptGroup, barsHeight);
     }
 
-    // Height of the small bars strip drawn below the main chart for the
-    // "Nuevos" prompt view — enough to read bar heights at a glance without
-    // competing for space with the usage chart above it.
-    private const double PromptBarsPanelHeight = 34;
+    // Height of the bars strip grown out of the usage chart's own 0%
+    // baseline for the "Nuevos" prompt view — enough to read bar heights at
+    // a glance without needing much extra room.
+    private const double PromptBarsHeight = 34;
 
     /// <summary>
-    /// A compact "volume pane" style strip, same width/x-axis mapping as
-    /// the main chart above it (padLeft/padRight/plotWidth line up exactly)
-    /// so each bar sits under its corresponding moment in time — structurally
-    /// separate from the usage chart's own canvas specifically so bars can
-    /// never visually overlap the usage line/fill, no matter how tall a
-    /// spike gets.
+    /// Bars drawn straight onto the main chart's own Grid, sharing its
+    /// exact x-axis mapping (padLeft/plotWidth) and — critically — using
+    /// <paramref name="baselineY"/> (the usage chart's own 0% line) as
+    /// every bar's bottom edge, so they read as growing directly out of the
+    /// usage chart instead of floating in a disconnected box below it.
     /// </summary>
-    private static FrameworkElement BuildPromptBarsPanel(
-        List<(DateTimeOffset At, int Delta)> series, double width, double height,
-        Brush barBrush, DateTimeOffset minTime, double spanSeconds, double padLeft, double padRight)
+    private static Grid DrawPromptBars(
+        Grid host, List<(DateTimeOffset At, int Delta)> series, double baselineY, double barsHeight,
+        Brush barBrush, DateTimeOffset minTime, double spanSeconds, double plotWidth, double padLeft, double padRight)
     {
-        var panel = new Grid { Width = width, Height = height };
-        var plotWidth = Math.Max(1, width - padLeft - padRight);
-        var max = Math.Max(1, series.Max(p => p.Delta));
+        var barsGroup = new Grid();
+        host.Children.Add(barsGroup);
 
-        // Leaves headroom at the top for the "(máx N)" label so a full-height
-        // bar never sits directly under it.
+        // Leaves headroom right under the baseline for the "(máx N)" label
+        // so a full-height bar never sits directly under it.
         const double topPad = 12;
-        var barAreaHeight = height - topPad;
+        var barPlotHeight = Math.Max(1, barsHeight - topPad);
+        var max = Math.Max(1, series.Max(p => p.Delta));
         var barWidth = Math.Clamp(plotWidth / Math.Max(1, series.Count) * 0.6, 2, 10);
 
         foreach (var (at, delta) in series)
         {
             var x = padLeft + plotWidth * ((at - minTime).TotalSeconds / spanSeconds);
-            var barHeight = Math.Max(1.5, barAreaHeight * Math.Clamp(delta / (double)max, 0, 1));
-            panel.Children.Add(new Rectangle
+            var barHeight = Math.Max(1.5, barPlotHeight * Math.Clamp(delta / (double)max, 0, 1));
+            barsGroup.Children.Add(new Rectangle
             {
                 Width = barWidth,
                 Height = barHeight,
@@ -332,19 +340,19 @@ internal static class ChartBuilder
                 RadiusX = 1, RadiusY = 1,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(x - barWidth / 2, height - barHeight, 0, 0),
+                Margin = new Thickness(x - barWidth / 2, baselineY - barHeight, 0, 0),
             });
         }
 
-        panel.Children.Add(new TextBlock
+        barsGroup.Children.Add(new TextBlock
         {
             Text = Strings.F("stats.prompts.legend", max),
             Foreground = barBrush, Opacity = 0.85, FontSize = 9, FontWeight = FontWeights.Medium,
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 0, padRight, 0),
+            Margin = new Thickness(0, baselineY + 2, padRight, 0),
         });
 
-        return panel;
+        return barsGroup;
     }
 
     /// <summary>

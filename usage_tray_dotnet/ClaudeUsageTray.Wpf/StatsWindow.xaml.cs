@@ -412,23 +412,18 @@ public partial class StatsWindow : Window
         BuildPromptModeSelector(textSecondary, promptLineBrush);
 
         var since = SinceForRange(_range);
-        // Totals first — always visible, independent of the active tab —
-        // then the range-scoped breakdown right below it.
-        var totalsDashboard = BuildTotalsDashboard(textPrimary, textSecondary, gridBrush);
-        var rangeDashboard = BuildDashboard(textPrimary, textSecondary, gridBrush, since);
-        if (totalsDashboard is not null) ContentHost.Children.Add(totalsDashboard);
-        if (rangeDashboard is not null) ContentHost.Children.Add(rangeDashboard);
-
+        var dashboard = BuildDashboardRow(textPrimary, textSecondary, gridBrush, since);
         var dashboardHeight = 0.0;
-        if (totalsDashboard is not null || rangeDashboard is not null)
+        if (dashboard is not null)
         {
-            // Force a layout pass now so their real height is known before
+            ContentHost.Children.Add(dashboard);
+            // Force a layout pass now so its real height is known before
             // the chart-height budget below is computed — otherwise the
-            // dashboards' own space wouldn't be accounted for and charts
+            // dashboard's own space wouldn't be accounted for and charts
             // could overflow the viewport again, right back to the
             // scrollbar this whole responsive-sizing pass was meant to fix.
             ContentHost.UpdateLayout();
-            dashboardHeight = (totalsDashboard?.ActualHeight ?? 0) + (rangeDashboard?.ActualHeight ?? 0);
+            dashboardHeight = dashboard.ActualHeight;
         }
 
         if (_serviceNames.Count == 0)
@@ -481,91 +476,74 @@ public partial class StatsWindow : Window
     };
 
     /// <summary>
-    /// One compact card per coding agent that has any activity in range:
-    /// new prompts (from PromptCountStore), distinct projects touched, and
-    /// distinct tasks/chats — the project/task counts are computed live
-    /// from the same helpers /proyectos uses (cheap: they only read each
-    /// session's first line), not from PromptCountStore, which only ever
-    /// tracks prompt totals. Returns null when neither agent has anything
-    /// to show yet, so Render() can skip adding an empty row.
+    /// One row containing BOTH the always-on full-history card and the
+    /// active-tab-scoped card per coding agent, side by side — a prior
+    /// version split these into two separate stacked rows (one per
+    /// section), which wasn't what was asked for: the CARDS go in a row,
+    /// not their own contents. Each card's title carries a small scope
+    /// label ("Totales" vs the active Hoy/Semana/Mes tab's own name) so two
+    /// same-named agent cards sitting next to each other stay distinguishable.
+    /// Skips a card entirely when that agent has nothing to show for that
+    /// scope; returns null when nothing qualifies at all, so Render() can
+    /// skip adding an empty row.
     /// </summary>
-    private FrameworkElement? BuildDashboard(Brush textPrimary, Brush textSecondary, Brush cardBackground, DateTimeOffset since)
+    private FrameworkElement? BuildDashboardRow(Brush textPrimary, Brush textSecondary, Brush cardBackground, DateTimeOffset since)
     {
-        var wrap = new WrapPanel();
-
-        foreach (var agent in DashboardAgents)
+        var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        var totalsLabel = Strings.T("stats.dashboard.totals.badge");
+        var rangeLabel = Strings.T(_range switch
         {
-            var tasks = GetAgentTasks(agent);
-            var inRange = tasks.Where(t => t.LastActivity >= since).ToList();
-            var projectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            var taskCount = inRange.Count;
-            var promptCount = _promptCountStore.GetAgentTotalInRange(agent, since);
-
-            if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
-            wrap.Children.Add(BuildDashboardCard(agent, promptCount, projectCount, taskCount, textPrimary, textSecondary, cardBackground));
-        }
-
-        return WrapDashboardSection("stats.dashboard.range.title", wrap, textSecondary);
-    }
-
-    /// <summary>
-    /// Same per-agent cards as <see cref="BuildDashboard"/>, but ALWAYS the
-    /// full-history figures regardless of the active Hoy/Semana/Mes tab —
-    /// requested explicitly so there's a stable "how much have I used this,
-    /// total" reference that doesn't change when switching ranges. Prompts
-    /// come from the latest known cumulative total per project (each
-    /// snapshot already holds a full-transcript scan, so the latest one IS
-    /// the all-time total — see PromptCountStore/GetPromptCountsByProject),
-    /// not a delta sum. Projects/tasks reuse the same uncapped recent-tasks
-    /// list as BuildDashboard, just without the `since` filter.
-    /// </summary>
-    private FrameworkElement? BuildTotalsDashboard(Brush textPrimary, Brush textSecondary, Brush cardBackground)
-    {
-        var wrap = new WrapPanel();
-
-        foreach (var agent in DashboardAgents)
-        {
-            var tasks = GetAgentTasks(agent);
-            var projectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            var taskCount = tasks.Count;
-            var promptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
-
-            if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
-            wrap.Children.Add(BuildDashboardCard(agent, promptCount, projectCount, taskCount, textPrimary, textSecondary, cardBackground));
-        }
-
-        return WrapDashboardSection("stats.dashboard.totals.title", wrap, textSecondary);
-    }
-
-    private static FrameworkElement? WrapDashboardSection(string titleKey, WrapPanel wrap, Brush textSecondary)
-    {
-        if (wrap.Children.Count == 0) return null;
-
-        var section = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
-        section.Children.Add(new TextBlock
-        {
-            Text = Strings.T(titleKey),
-            FontSize = 11,
-            FontWeight = FontWeights.Medium,
-            Foreground = textSecondary,
-            Margin = new Thickness(2, 0, 0, 6),
+            StatsRange.Today => "stats.range.today",
+            StatsRange.Week => "stats.range.week",
+            StatsRange.Month => "stats.range.month",
+            _ => "stats.range.today",
         });
-        section.Children.Add(wrap);
-        return section;
+
+        foreach (var agent in DashboardAgents)
+        {
+            var tasks = GetAgentTasks(agent);
+
+            var totalProjectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var totalTaskCount = tasks.Count;
+            // Latest known cumulative total per project — each snapshot
+            // already holds a full-transcript scan, so the latest one IS
+            // the all-time total (see PromptCountStore/GetPromptCountsByProject),
+            // not a delta sum.
+            var totalPromptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
+            if (!(totalPromptCount == 0 && totalProjectCount == 0 && totalTaskCount == 0))
+                wrap.Children.Add(BuildDashboardCard(agent, totalsLabel, totalPromptCount, totalProjectCount, totalTaskCount, textPrimary, textSecondary, cardBackground));
+
+            var inRange = tasks.Where(t => t.LastActivity >= since).ToList();
+            var rangeProjectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            var rangeTaskCount = inRange.Count;
+            var rangePromptCount = _promptCountStore.GetAgentTotalInRange(agent, since);
+            if (!(rangePromptCount == 0 && rangeProjectCount == 0 && rangeTaskCount == 0))
+                wrap.Children.Add(BuildDashboardCard(agent, rangeLabel, rangePromptCount, rangeProjectCount, rangeTaskCount, textPrimary, textSecondary, cardBackground));
+        }
+
+        return wrap.Children.Count > 0 ? wrap : null;
     }
 
-    private static Border BuildDashboardCard(string agent, int promptCount, int projectCount, int taskCount,
+    private static Border BuildDashboardCard(string agent, string scopeLabel, int promptCount, int projectCount, int taskCount,
         Brush textPrimary, Brush textSecondary, Brush cardBackground)
     {
         var stack = new StackPanel();
-        stack.Children.Add(new TextBlock
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+        titleRow.Children.Add(new TextBlock
         {
             Text = AgentDisplayNames.For(agent),
             FontSize = 12,
             FontWeight = FontWeights.Medium,
             Foreground = textPrimary,
-            Margin = new Thickness(0, 0, 0, 6),
         });
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = $"  ·  {scopeLabel}",
+            FontSize = 10,
+            Foreground = textSecondary,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        stack.Children.Add(titleRow);
         stack.Children.Add(BuildDashboardStatLine("✨", Strings.F("stats.dashboard.prompts", promptCount), textSecondary));
         stack.Children.Add(BuildDashboardStatLine("🗂️", Strings.F("stats.dashboard.projects", projectCount), textSecondary));
         stack.Children.Add(BuildDashboardStatLine("💬", Strings.F("stats.dashboard.tasks", taskCount), textSecondary));
