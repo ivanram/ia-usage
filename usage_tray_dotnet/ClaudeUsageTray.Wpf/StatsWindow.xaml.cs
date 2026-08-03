@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -10,7 +11,7 @@ namespace ClaudeUsageTray;
 
 public partial class StatsWindow : Window
 {
-    private enum StatsRange { Today, Yesterday, Week, Month }
+    private enum StatsRange { Today, Yesterday, Week, Month, Custom }
     private enum PromptDisplayMode { New, Total }
 
     // Floor so charts never get squished unreadable when many services are
@@ -52,6 +53,11 @@ public partial class StatsWindow : Window
     private double _zoomLevel = MinZoom;
     private StatsRange _range = StatsRange.Today;
     private PromptDisplayMode _promptMode = PromptDisplayMode.New;
+    // The day picked via the "Otra fecha" calendar — only meaningful while
+    // _range == StatsRange.Custom, but kept around after leaving that tab
+    // so flipping back to it re-shows the same day instead of forgetting it.
+    private DateTimeOffset? _customDate;
+    private Popup? _datePickerPopup;
 
     private bool _isMaximized;
     private double _preMaximizeWidth, _preMaximizeHeight, _preMaximizeLeft, _preMaximizeTop;
@@ -253,12 +259,12 @@ public partial class StatsWindow : Window
     /// exactly the sawtooth shape (and reset timing) this window exists to
     /// show. Point counts stay easily renderable even at Month with the
     /// slowest allowed refresh interval (5 min): well under 10k points.
-    /// Every range except Yesterday is open-ended (from its start through
-    /// now), so Until is null everywhere but there — Yesterday is the one
-    /// case that needs an upper bound too, or it would just show "since
-    /// yesterday midnight," i.e. today's data as well.
+    /// Every range except Yesterday and Custom is open-ended (from its start
+    /// through now), so Until is null everywhere but there — both need an
+    /// upper bound too, or "since that day's midnight" would just keep
+    /// pulling in everything more recent as well.
     /// </summary>
-    private static (DateTimeOffset Since, DateTimeOffset? Until) RangeBoundsFor(StatsRange range)
+    private (DateTimeOffset Since, DateTimeOffset? Until) RangeBoundsFor(StatsRange range)
     {
         var now = DateTimeOffset.Now;
         var todayStart = new DateTimeOffset(now.Date, now.Offset);
@@ -268,6 +274,7 @@ public partial class StatsWindow : Window
             StatsRange.Yesterday => (todayStart.AddDays(-1), todayStart),
             StatsRange.Week => (now.AddDays(-7), null),
             StatsRange.Month => (now.AddDays(-30), null),
+            StatsRange.Custom when _customDate is { } d => (d, d.AddDays(1)),
             _ => (now.AddDays(-1), null),
         };
     }
@@ -279,6 +286,127 @@ public partial class StatsWindow : Window
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.yesterday"), StatsRange.Yesterday, textSecondary, accent));
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.week"), StatsRange.Week, textSecondary, accent));
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.month"), StatsRange.Month, textSecondary, accent));
+        RangeSelectorHost.Children.Add(BuildCustomDateTab(textSecondary, accent));
+    }
+
+    /// <summary>
+    /// Same tab look as BuildRangeTab, but clicking it opens a calendar
+    /// popup instead of switching range immediately — Custom needs a day
+    /// picked first, there's nothing sensible to switch TO on the bare
+    /// click the way there is for Hoy/Ayer/Semana/Mes.
+    /// </summary>
+    private FrameworkElement BuildCustomDateTab(Brush textSecondary, Brush accent)
+    {
+        var isActive = _range == StatsRange.Custom;
+        var activeBg = accent.Clone();
+        activeBg.Opacity = 0.14;
+
+        var border = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 5, 12, 5),
+            Margin = new Thickness(0, 0, 6, 0),
+            Background = isActive ? activeBg : Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            Child = new TextBlock
+            {
+                Text = Strings.T("stats.range.custom"),
+                FontSize = 12,
+                FontWeight = isActive ? FontWeights.Medium : FontWeights.Normal,
+                Foreground = isActive ? accent : textSecondary,
+            },
+        };
+        border.MouseLeftButtonUp += (s, e) => ShowDatePickerPopup(border, accent);
+        return border;
+    }
+
+    /// <summary>
+    /// A Calendar popup anchored under the "Otra fecha" tab, with every day
+    /// that has no recorded usage history blacked out — per the request,
+    /// only days we actually have data for should be pickable at all,
+    /// rather than letting the user land on an empty chart. Picking a day
+    /// switches straight to Custom range and closes the popup.
+    /// </summary>
+    private void ShowDatePickerPopup(FrameworkElement anchor, Brush accent)
+    {
+        var daysWithData = _historyStore.GetDaysWithData();
+        if (daysWithData.Count == 0) return;
+
+        var minDay = daysWithData.Min();
+        var maxDay = daysWithData.Max();
+
+        var calendar = new Calendar
+        {
+            SelectionMode = CalendarSelectionMode.SingleDate,
+            DisplayDateStart = minDay.ToDateTime(TimeOnly.MinValue),
+            DisplayDateEnd = maxDay.ToDateTime(TimeOnly.MinValue),
+            DisplayDate = (_customDate?.Date ?? maxDay.ToDateTime(TimeOnly.MinValue)),
+        };
+        if (_customDate is { } selected)
+        {
+            calendar.SelectedDate = selected.Date;
+        }
+
+        // BlackoutDates only takes ranges, so the "allowed" sparse set has
+        // to be inverted into the gaps between/around it — every stretch of
+        // consecutive days with no data, across the whole displayed span.
+        var cursor = minDay;
+        while (cursor <= maxDay)
+        {
+            if (!daysWithData.Contains(cursor))
+            {
+                var gapStart = cursor;
+                while (cursor <= maxDay && !daysWithData.Contains(cursor)) cursor = cursor.AddDays(1);
+                var gapEnd = cursor.AddDays(-1);
+                calendar.BlackoutDates.Add(new CalendarDateRange(gapStart.ToDateTime(TimeOnly.MinValue), gapEnd.ToDateTime(TimeOnly.MinValue)));
+            }
+            else
+            {
+                cursor = cursor.AddDays(1);
+            }
+        }
+
+        // Same hand-picked panel background Render() uses for RootGrid —
+        // not a MaterialDesignPaper resource lookup, for the same reason
+        // Render() itself avoids one: it reads subtly different from this
+        // window's own chosen background and would look like a mismatched
+        // popup bolted onto the side.
+        var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+        var popupBackground = isDark
+            ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
+            : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));
+
+        var popup = new Popup
+        {
+            PlacementTarget = anchor,
+            Placement = PlacementMode.Bottom,
+            StaysOpen = false,
+            AllowsTransparency = true,
+            Child = new Border
+            {
+                Background = popupBackground,
+                BorderBrush = accent,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(4),
+                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 16, ShadowDepth = 2, Opacity = 0.3 },
+                Child = calendar,
+            },
+        };
+
+        calendar.SelectedDatesChanged += (s, e) =>
+        {
+            if (calendar.SelectedDate is { } picked)
+            {
+                _customDate = new DateTimeOffset(picked, DateTimeOffset.Now.Offset);
+                _range = StatsRange.Custom;
+                popup.IsOpen = false;
+                Render();
+            }
+        };
+
+        _datePickerPopup = popup;
+        popup.IsOpen = true;
     }
 
     private FrameworkElement BuildRangeTab(string text, StatsRange range, Brush textSecondary, Brush accent)
@@ -413,6 +541,11 @@ public partial class StatsWindow : Window
         MaximizeGlyph.Foreground = textSecondary;
         MaximizeButton.ToolTip = Strings.T(_isMaximized ? "stats.restore" : "stats.maximize");
 
+        // Its anchor (a tab border) is about to be torn down and rebuilt
+        // below — an open popup pointed at the old, now-orphaned instance
+        // would be left dangling in a weird spot.
+        if (_datePickerPopup is not null) _datePickerPopup.IsOpen = false;
+
         BuildRangeSelector(textPrimary, textSecondary, accent);
         BuildPromptModeSelector(textSecondary, promptLineBrush);
 
@@ -477,7 +610,15 @@ public partial class StatsWindow : Window
         var chromeOverhead = Math.Max(0, probeBlocks.ActualHeight - probeChartHeight * _serviceNames.Count);
         ContentHost.Children.Remove(probeBlocks);
 
-        var availableForCharts = viewportHeight - ContentHost.Margin.Top - ContentHost.Margin.Bottom - dashboardHeight - chromeOverhead;
+        // Even after measuring the real chrome overhead above, WPF's own
+        // ScrollViewer/DPI rounding leaves a small but real gap between what
+        // this math predicts and what the ScrollViewer actually decides it
+        // needs — enough, in practice, to still trigger a scrollbar. Rather
+        // than chase that gap pixel-for-pixel, budget deliberately less
+        // than the full measured space so there's real headroom to absorb
+        // it, instead of racing WPF for the exact last pixel.
+        const double HeightSafetyMargin = 40;
+        var availableForCharts = viewportHeight - ContentHost.Margin.Top - ContentHost.Margin.Bottom - dashboardHeight - chromeOverhead - HeightSafetyMargin;
         var chartHeight = Math.Max(MinChartHeight, availableForCharts / _serviceNames.Count);
 
         var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since, until,
@@ -513,14 +654,19 @@ public partial class StatsWindow : Window
     {
         var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
         var totalsLabel = Strings.T("stats.dashboard.totals.badge");
-        var rangeLabel = Strings.T(_range switch
-        {
-            StatsRange.Today => "stats.range.today",
-            StatsRange.Yesterday => "stats.range.yesterday",
-            StatsRange.Week => "stats.range.week",
-            StatsRange.Month => "stats.range.month",
-            _ => "stats.range.today",
-        });
+        // Custom shows the actual picked day here (e.g. "3 ago") instead of
+        // the literal "Otra fecha" tab text — that's what's actually useful
+        // to know once you're looking at a specific day's numbers.
+        var rangeLabel = _range == StatsRange.Custom && _customDate is { } customDay
+            ? customDay.ToString("d MMM")
+            : Strings.T(_range switch
+            {
+                StatsRange.Today => "stats.range.today",
+                StatsRange.Yesterday => "stats.range.yesterday",
+                StatsRange.Week => "stats.range.week",
+                StatsRange.Month => "stats.range.month",
+                _ => "stats.range.today",
+            });
 
         // All range-scoped cards first, then all Totales cards — grouped by
         // scope rather than interleaved per agent, so the row reads as two

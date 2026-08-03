@@ -145,4 +145,35 @@ public sealed class UsageHistoryStore
             return new List<UsageHistoryPoint>();
         }
     }
+
+    /// <summary>
+    /// Every distinct local calendar day that has at least one recorded
+    /// usage sample, across every service — what the "Otra fecha" calendar
+    /// picker blacks out everything except. DISTINCT barely shrinks the
+    /// result here (each service's own recorded_at differs by microseconds
+    /// even within the same refresh tick), so this is a straightforward
+    /// full scan; only ever called once, when that popup opens.
+    /// </summary>
+    public HashSet<DateOnly> GetDaysWithData()
+    {
+        var result = new HashSet<DateOnly>();
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT DISTINCT recorded_at FROM usage_history";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var local = DateTimeOffset.Parse(reader.GetString(0)).ToLocalTime();
+                result.Add(DateOnly.FromDateTime(local.Date));
+            }
+        }
+        catch
+        {
+            // Best effort — an empty set just means the picker has nothing to offer.
+        }
+        return result;
+    }
 }
