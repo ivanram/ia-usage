@@ -75,16 +75,18 @@ public sealed class UsageHistoryStore
         }
     }
 
-    public List<DateTimeOffset> GetResets(string service, DateTimeOffset since)
+    public List<DateTimeOffset> GetResets(string service, DateTimeOffset since, DateTimeOffset? until = null)
     {
         try
         {
             using var conn = new SqliteConnection(_connectionString);
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT recorded_at FROM usage_resets WHERE service = $s AND recorded_at >= $since ORDER BY recorded_at ASC";
+            cmd.CommandText = "SELECT recorded_at FROM usage_resets WHERE service = $s AND recorded_at >= $since"
+                + (until.HasValue ? " AND recorded_at < $until" : "") + " ORDER BY recorded_at ASC";
             cmd.Parameters.AddWithValue("$s", service);
             cmd.Parameters.AddWithValue("$since", since.ToUniversalTime().ToString("O"));
+            if (until.HasValue) cmd.Parameters.AddWithValue("$until", until.Value.ToUniversalTime().ToString("O"));
             using var reader = cmd.ExecuteReader();
             var result = new List<DateTimeOffset>();
             while (reader.Read())
@@ -118,16 +120,18 @@ public sealed class UsageHistoryStore
         }
     }
 
-    public List<UsageHistoryPoint> GetHistory(string service, DateTimeOffset since)
+    public List<UsageHistoryPoint> GetHistory(string service, DateTimeOffset since, DateTimeOffset? until = null)
     {
         try
         {
             using var conn = new SqliteConnection(_connectionString);
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT recorded_at, percent FROM usage_history WHERE service = $s AND recorded_at >= $since ORDER BY recorded_at ASC";
+            cmd.CommandText = "SELECT recorded_at, percent FROM usage_history WHERE service = $s AND recorded_at >= $since"
+                + (until.HasValue ? " AND recorded_at < $until" : "") + " ORDER BY recorded_at ASC";
             cmd.Parameters.AddWithValue("$s", service);
             cmd.Parameters.AddWithValue("$since", since.ToUniversalTime().ToString("O"));
+            if (until.HasValue) cmd.Parameters.AddWithValue("$until", until.Value.ToUniversalTime().ToString("O"));
             using var reader = cmd.ExecuteReader();
             var result = new List<UsageHistoryPoint>();
             while (reader.Read())

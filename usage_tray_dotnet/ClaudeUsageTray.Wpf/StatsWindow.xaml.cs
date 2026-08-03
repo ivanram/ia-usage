@@ -10,23 +10,13 @@ namespace ClaudeUsageTray;
 
 public partial class StatsWindow : Window
 {
-    private enum StatsRange { Today, Week, Month }
+    private enum StatsRange { Today, Yesterday, Week, Month }
     private enum PromptDisplayMode { New, Total }
 
     // Floor so charts never get squished unreadable when many services are
     // stacked in a short window — beyond this point the outer ScrollViewer
     // takes over again, same as before this got responsive.
     private const double MinChartHeight = 90;
-    // Estimate of everything BuildServiceBlocks draws around a chart itself
-    // (icon+name header row + its bottom margin, plus the block's own
-    // bottom margin) — used to work out how much of the window's actual
-    // height is left for the charts themselves. Approximate on purpose:
-    // being a few pixels off just means an almost-imperceptible sliver of
-    // scroll slack, not a layout bug.
-    // +40 over the original 48 to cover the toggle-legend row now under
-    // each chart (and, in "Nuevos" prompt mode, the extra bars sub-panel) —
-    // approximate on purpose, same as before.
-    private const double PerServiceChromeHeight = 88;
     private const double AnchorGap = 12;
     // Wider than the popup-matching width, per the user's request — kept
     // relative to the popup's own width so it scales sensibly regardless
@@ -263,16 +253,22 @@ public partial class StatsWindow : Window
     /// exactly the sawtooth shape (and reset timing) this window exists to
     /// show. Point counts stay easily renderable even at Month with the
     /// slowest allowed refresh interval (5 min): well under 10k points.
+    /// Every range except Yesterday is open-ended (from its start through
+    /// now), so Until is null everywhere but there — Yesterday is the one
+    /// case that needs an upper bound too, or it would just show "since
+    /// yesterday midnight," i.e. today's data as well.
     /// </summary>
-    private static DateTimeOffset SinceForRange(StatsRange range)
+    private static (DateTimeOffset Since, DateTimeOffset? Until) RangeBoundsFor(StatsRange range)
     {
         var now = DateTimeOffset.Now;
+        var todayStart = new DateTimeOffset(now.Date, now.Offset);
         return range switch
         {
-            StatsRange.Today => new DateTimeOffset(now.Date, now.Offset),
-            StatsRange.Week => now.AddDays(-7),
-            StatsRange.Month => now.AddDays(-30),
-            _ => now.AddDays(-1),
+            StatsRange.Today => (todayStart, null),
+            StatsRange.Yesterday => (todayStart.AddDays(-1), todayStart),
+            StatsRange.Week => (now.AddDays(-7), null),
+            StatsRange.Month => (now.AddDays(-30), null),
+            _ => (now.AddDays(-1), null),
         };
     }
 
@@ -280,6 +276,7 @@ public partial class StatsWindow : Window
     {
         RangeSelectorHost.Children.Clear();
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.today"), StatsRange.Today, textSecondary, accent));
+        RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.yesterday"), StatsRange.Yesterday, textSecondary, accent));
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.week"), StatsRange.Week, textSecondary, accent));
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.month"), StatsRange.Month, textSecondary, accent));
     }
@@ -419,8 +416,8 @@ public partial class StatsWindow : Window
         BuildRangeSelector(textPrimary, textSecondary, accent);
         BuildPromptModeSelector(textSecondary, promptLineBrush);
 
-        var since = SinceForRange(_range);
-        var dashboard = BuildDashboardRow(textPrimary, textSecondary, gridBrush, totalsCardBackground, since);
+        var (since, until) = RangeBoundsFor(_range);
+        var dashboard = BuildDashboardRow(textPrimary, textSecondary, gridBrush, totalsCardBackground, since, until);
         var dashboardHeight = 0.0;
         if (dashboard is not null)
         {
@@ -462,11 +459,28 @@ public partial class StatsWindow : Window
         // spare room unused in a tall window and forced a scrollbar in a
         // short one.
         var viewportHeight = ContentScrollViewer.ActualHeight > 0 ? ContentScrollViewer.ActualHeight : _defaultHeight - 76;
-        var availableForCharts = viewportHeight - ContentHost.Margin.Top - ContentHost.Margin.Bottom - dashboardHeight
-            - PerServiceChromeHeight * _serviceNames.Count;
+
+        // A hardcoded "how much space does the chrome around a chart take"
+        // constant kept drifting out of sync every time something (a
+        // legend row, the bars sub-panel) was added around the chart, which
+        // is exactly how this window ended up permanently needing a
+        // scrollbar no matter how big it was made. Instead, build the real
+        // blocks once at a throwaway nominal height purely to MEASURE that
+        // overhead with real fonts/DPI/data, then build them again — for
+        // real this time — at the height that precisely fills what's left.
+        const double probeChartHeight = MinChartHeight;
+        var probeBlocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since, until,
+            chartWidth, probeChartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
+            viewportWidth, OnChartZoom, _promptCountStore, promptLineBrush, _promptMode == PromptDisplayMode.Total);
+        ContentHost.Children.Add(probeBlocks);
+        ContentHost.UpdateLayout();
+        var chromeOverhead = Math.Max(0, probeBlocks.ActualHeight - probeChartHeight * _serviceNames.Count);
+        ContentHost.Children.Remove(probeBlocks);
+
+        var availableForCharts = viewportHeight - ContentHost.Margin.Top - ContentHost.Margin.Bottom - dashboardHeight - chromeOverhead;
         var chartHeight = Math.Max(MinChartHeight, availableForCharts / _serviceNames.Count);
 
-        var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since,
+        var blocks = ChartBuilder.BuildServiceBlocks(_serviceNames, _historyStore, since, until,
             chartWidth, chartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
             viewportWidth, OnChartZoom, _promptCountStore, promptLineBrush, _promptMode == PromptDisplayMode.Total);
         ContentHost.Children.Add(blocks);
@@ -495,13 +509,14 @@ public partial class StatsWindow : Window
     /// scope; returns null when nothing qualifies at all, so Render() can
     /// skip adding an empty row.
     /// </summary>
-    private FrameworkElement? BuildDashboardRow(Brush textPrimary, Brush textSecondary, Brush cardBackground, Brush totalsCardBackground, DateTimeOffset since)
+    private FrameworkElement? BuildDashboardRow(Brush textPrimary, Brush textSecondary, Brush cardBackground, Brush totalsCardBackground, DateTimeOffset since, DateTimeOffset? until)
     {
         var wrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
         var totalsLabel = Strings.T("stats.dashboard.totals.badge");
         var rangeLabel = Strings.T(_range switch
         {
             StatsRange.Today => "stats.range.today",
+            StatsRange.Yesterday => "stats.range.yesterday",
             StatsRange.Week => "stats.range.week",
             StatsRange.Month => "stats.range.month",
             _ => "stats.range.today",
@@ -514,10 +529,10 @@ public partial class StatsWindow : Window
 
         foreach (var agent in DashboardAgents)
         {
-            var inRange = tasksByAgent[agent].Where(t => t.LastActivity >= since).ToList();
+            var inRange = tasksByAgent[agent].Where(t => t.LastActivity >= since && (until is null || t.LastActivity < until)).ToList();
             var rangeProjectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var rangeTaskCount = inRange.Count;
-            var rangePromptCount = _promptCountStore.GetAgentTotalInRange(agent, since);
+            var rangePromptCount = _promptCountStore.GetAgentTotalInRange(agent, since, until);
             if (!(rangePromptCount == 0 && rangeProjectCount == 0 && rangeTaskCount == 0))
                 wrap.Children.Add(BuildDashboardCard(agent, rangeLabel, rangePromptCount, rangeProjectCount, rangeTaskCount, textPrimary, textSecondary, cardBackground));
         }

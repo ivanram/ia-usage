@@ -68,18 +68,23 @@ internal static class ChartBuilder
         // for a row of hourly time labels under the plot; padTop for a
         // compact start-date label above it (hours are covered by the
         // per-gridline labels below, so only the date needs calling out once).
-        const double padTop = 18, padBottom = 16, padLeft = 30, padRight = 6;
+        // padRight is bigger than it looks like it needs to be at a glance —
+        // it's what keeps the right-aligned "prompts (máx N)" legend text
+        // from ending up flush against (or clipped by) the window's own
+        // edge once the chart is rendered at its real on-screen width.
+        const double padTop = 18, padBottom = 16, padLeft = 30, padRight = 16;
         var plotWidth = Math.Max(1, width - padLeft - padRight);
         var plotHeight = Math.Max(1, height - padTop - padBottom);
 
         // Bars for the "Nuevos" prompt view grow directly out of the usage
-        // chart's own 0% baseline (padTop + plotHeight) instead of living in
-        // a detached panel — so the host itself needs to be taller than the
-        // requested `height` to have room for them, decided upfront since
-        // everything below (gridlines, x-axis labels) needs to know about it.
+        // chart's own 0% baseline (padTop + plotHeight), UPWARD into the
+        // existing plot area — they never extend below the baseline, so the
+        // only reason the host needs to be taller than the requested
+        // `height` at all is to fit the "(máx N)" legend line that sits
+        // just under it, not the bars themselves.
         var willDrawBars = promptsAsBars && promptLineBrush is not null && promptSeries is { Count: > 0 }
             && promptSeries.Any(p => p.At >= points[0].RecordedAt && p.At <= points[^1].RecordedAt);
-        var barsHeight = willDrawBars ? PromptBarsHeight : 0;
+        var barsHeight = willDrawBars ? PromptBarsLegendHeight : 0;
         var baselineY = padTop + plotHeight;
 
         var host = new Grid { Width = width, Height = height + barsHeight };
@@ -245,7 +250,7 @@ internal static class ChartBuilder
         {
             if (promptsAsBars)
             {
-                promptGroup = DrawPromptBars(host, relevantPrompts, baselineY, barsHeight, promptLineBrush, minTime, spanSeconds, plotWidth, padLeft, padRight);
+                promptGroup = DrawPromptBars(host, relevantPrompts, baselineY, PromptBarsMaxHeight, promptLineBrush, minTime, spanSeconds, plotWidth, padLeft, padRight);
             }
             else
             {
@@ -302,10 +307,15 @@ internal static class ChartBuilder
         return new ChartBuildResult(host, usageGroup, promptGroup, barsHeight);
     }
 
-    // Height of the bars strip grown out of the usage chart's own 0%
-    // baseline for the "Nuevos" prompt view — enough to read bar heights at
-    // a glance without needing much extra room.
-    private const double PromptBarsHeight = 34;
+    // How tall a bar may grow upward from the baseline into the usage
+    // plot's own area — enough to read bar heights at a glance without
+    // fighting the usage line for space.
+    private const double PromptBarsMaxHeight = 22;
+    // Room reserved BELOW the baseline, purely for the "(máx N)" legend
+    // line — bars themselves never go below the baseline (see the comment
+    // above willDrawBars), so this no longer needs to also cover a bar's
+    // own height the way it used to.
+    private const double PromptBarsLegendHeight = 16;
 
     /// <summary>
     /// Bars drawn straight onto the main chart's own Grid, sharing its
@@ -315,23 +325,19 @@ internal static class ChartBuilder
     /// usage chart instead of floating in a disconnected box below it.
     /// </summary>
     private static Grid DrawPromptBars(
-        Grid host, List<(DateTimeOffset At, int Delta)> series, double baselineY, double barsHeight,
+        Grid host, List<(DateTimeOffset At, int Delta)> series, double baselineY, double maxBarHeight,
         Brush barBrush, DateTimeOffset minTime, double spanSeconds, double plotWidth, double padLeft, double padRight)
     {
         var barsGroup = new Grid();
         host.Children.Add(barsGroup);
 
-        // Leaves headroom right under the baseline for the "(máx N)" label
-        // so a full-height bar never sits directly under it.
-        const double topPad = 12;
-        var barPlotHeight = Math.Max(1, barsHeight - topPad);
         var max = Math.Max(1, series.Max(p => p.Delta));
         var barWidth = Math.Clamp(plotWidth / Math.Max(1, series.Count) * 0.6, 2, 10);
 
         foreach (var (at, delta) in series)
         {
             var x = padLeft + plotWidth * ((at - minTime).TotalSeconds / spanSeconds);
-            var barHeight = Math.Max(1.5, barPlotHeight * Math.Clamp(delta / (double)max, 0, 1));
+            var barHeight = Math.Max(1.5, maxBarHeight * Math.Clamp(delta / (double)max, 0, 1));
             barsGroup.Children.Add(new Rectangle
             {
                 Width = barWidth,
@@ -487,7 +493,7 @@ internal static class ChartBuilder
             .ToList();
 
     public static StackPanel BuildServiceBlocks(
-        IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since,
+        IReadOnlyList<string> serviceNames, UsageHistoryStore historyStore, DateTimeOffset since, DateTimeOffset? until,
         double chartWidth, double chartHeight,
         Brush textPrimary, Brush textSecondary, Brush lineBrush, Brush fillBrush, Brush gridBrush,
         double? viewportWidth = null, Action<int>? onZoom = null,
@@ -507,8 +513,8 @@ internal static class ChartBuilder
             header.Children.Add(new TextBlock { Text = serviceName, FontSize = 13, FontWeight = FontWeights.Medium, Foreground = textPrimary, VerticalAlignment = VerticalAlignment.Center });
             block.Children.Add(header);
 
-            var points = historyStore.GetHistory(serviceName, since);
-            var resets = historyStore.GetResets(serviceName, since);
+            var points = historyStore.GetHistory(serviceName, since, until);
+            var resets = historyStore.GetResets(serviceName, since, until);
             List<(DateTimeOffset At, int Delta)>? promptSeries = null;
             if (promptCountStore is not null && CodingAgentByService.TryGetValue(serviceName, out var agent))
             {
@@ -520,8 +526,8 @@ internal static class ChartBuilder
                 // older, denser 30-minute-interval history and any samples
                 // clustered close together from an app restart.
                 promptSeries = useTotalPrompts
-                    ? promptCountStore.GetAgentTotalSeries(agent, since).Select(p => (p.At, p.Total)).ToList()
-                    : GroupDeltasByHour(promptCountStore.GetAgentDeltaSeries(agent, since));
+                    ? promptCountStore.GetAgentTotalSeries(agent, since, until).Select(p => (p.At, p.Total)).ToList()
+                    : GroupDeltasByHour(promptCountStore.GetAgentDeltaSeries(agent, since, until));
             }
             // "Totales" reads naturally as a running line (see Build's own
             // reasoning); "Nuevos" per-interval deltas read naturally as

@@ -148,7 +148,7 @@ public sealed class PromptCountStore
     /// against something — without it the first tick after `since` would
     /// have no earlier point to diff against and would have to be dropped.
     /// </summary>
-    private List<PromptCountSample> GetAggregateSeries(string agent, DateTimeOffset since)
+    private List<PromptCountSample> GetAggregateSeries(string agent, DateTimeOffset since, DateTimeOffset? until = null)
     {
         var result = new List<PromptCountSample>();
         try
@@ -177,14 +177,15 @@ public sealed class PromptCountStore
             }
 
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
+            cmd.CommandText = $"""
                 SELECT recorded_at, SUM(total_count) FROM prompt_counts
-                WHERE agent = $a AND recorded_at >= $since
+                WHERE agent = $a AND recorded_at >= $since{(until.HasValue ? " AND recorded_at < $until" : "")}
                 GROUP BY recorded_at
                 ORDER BY recorded_at ASC
                 """;
             cmd.Parameters.AddWithValue("$a", agent);
             cmd.Parameters.AddWithValue("$since", since.ToUniversalTime().ToString("O"));
+            if (until.HasValue) cmd.Parameters.AddWithValue("$until", until.Value.ToUniversalTime().ToString("O"));
             using var mainReader = cmd.ExecuteReader();
             while (mainReader.Read())
             {
@@ -204,9 +205,9 @@ public sealed class PromptCountStore
     /// Negative diffs (a project's history got pruned/reset between ticks)
     /// are clamped to 0 rather than shown as "negative prompts".
     /// </summary>
-    public List<(DateTimeOffset At, int Delta)> GetAgentDeltaSeries(string agent, DateTimeOffset since)
+    public List<(DateTimeOffset At, int Delta)> GetAgentDeltaSeries(string agent, DateTimeOffset since, DateTimeOffset? until = null)
     {
-        var series = GetAggregateSeries(agent, since);
+        var series = GetAggregateSeries(agent, since, until);
         var result = new List<(DateTimeOffset, int)>();
         for (var i = 1; i < series.Count; i++)
         {
@@ -217,16 +218,16 @@ public sealed class PromptCountStore
     }
 
     /// <summary>Total new prompts across the whole range — just the delta series summed.</summary>
-    public int GetAgentTotalInRange(string agent, DateTimeOffset since) =>
-        GetAgentDeltaSeries(agent, since).Sum(d => d.Delta);
+    public int GetAgentTotalInRange(string agent, DateTimeOffset since, DateTimeOffset? until = null) =>
+        GetAgentDeltaSeries(agent, since, until).Sum(d => d.Delta);
 
     /// <summary>
     /// (timestamp, cumulative total as of that timestamp) pairs — the raw
     /// numbers themselves rather than the differences between them, for
     /// the Stats window's "Totales" view of the prompt-count overlay.
     /// </summary>
-    public List<(DateTimeOffset At, int Total)> GetAgentTotalSeries(string agent, DateTimeOffset since) =>
-        GetAggregateSeries(agent, since)
+    public List<(DateTimeOffset At, int Total)> GetAgentTotalSeries(string agent, DateTimeOffset since, DateTimeOffset? until = null) =>
+        GetAggregateSeries(agent, since, until)
             .Where(s => s.RecordedAt >= since)
             .Select(s => (s.RecordedAt, s.Total))
             .ToList();
