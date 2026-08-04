@@ -98,92 +98,42 @@ internal static class CodexProjectsHelper
     /// would silently make every later delta wrong, not just show a
     /// slightly-stale list.
     /// </summary>
-    public static Dictionary<string, int> GetPromptCountsByProject()
+    public static Dictionary<string, int> GetPromptCountsByProject() => ScanPrompts().TotalsByProject;
+
+    /// <summary>
+    /// One full pass over every rollout file, gathering BOTH per-project
+    /// totals and every real prompt's own embedded timestamp — the latter
+    /// lets range-scoped counts (Hoy/Ayer/Semana/Mes) be computed by
+    /// filtering timestamps already in memory instead of rescanning the
+    /// transcripts from disk for every tab click, which is what made
+    /// opening the Stats window or switching range tabs peg the CPU. This
+    /// is the SAME reason a prompt's timestamp is trusted over the older
+    /// snapshot-diff approach in the first place — see PromptScanCache for
+    /// how callers are meant to use this (cached, refreshed on a timer,
+    /// never called directly from UI code).
+    /// </summary>
+    public static (Dictionary<string, int> TotalsByProject, List<DateTimeOffset> Timestamps) ScanPrompts()
     {
-        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (!Directory.Exists(SessionsRoot)) return result;
+        var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var timestamps = new List<DateTimeOffset>();
+        if (!Directory.Exists(SessionsRoot)) return (totals, timestamps);
 
         var projectNamesByRoot = LoadProjectNamesByRoot();
 
         List<string> files;
         try { files = Directory.EnumerateFiles(SessionsRoot, "*.jsonl", SearchOption.AllDirectories).ToList(); }
-        catch { return result; }
+        catch { return (totals, timestamps); }
 
         foreach (var file in files)
         {
-            var (cwd, promptCount) = ReadCwdAndCountPrompts(file);
-            if (cwd is not { Length: > 0 } || promptCount == 0) continue;
+            var (cwd, fileTimestamps) = ReadCwdAndPromptTimestamps(file);
+            if (cwd is not { Length: > 0 } || fileTimestamps.Count == 0) continue;
 
             var project = projectNamesByRoot.TryGetValue(cwd.TrimEnd('\\', '/'), out var name) ? name : cwd;
-            result[project] = result.TryGetValue(project, out var existing) ? existing + promptCount : promptCount;
+            totals[project] = totals.TryGetValue(project, out var existing) ? existing + fileTimestamps.Count : fileTimestamps.Count;
+            timestamps.AddRange(fileTimestamps);
         }
-        return result;
-    }
-
-    /// <summary>
-    /// Total real user prompts with their OWN embedded timestamp inside
-    /// [since, until) — computed by scanning the transcripts fresh right
-    /// now, not by diffing periodic external snapshots the way the "Nuevos"
-    /// dashboard/chart values used to. That diffing approach assumed every
-    /// scan sees a project's true total, so any one bad read (a file
-    /// transiently or even persistently locked by something else — an
-    /// antivirus scan, cloud sync, the Windows Search indexer) got recorded
-    /// as fact, and the next GOOD read then looked like a burst of
-    /// brand-new prompts that were never actually typed. A prompt's own
-    /// timestamp doesn't care when, or how reliably, we happened to be
-    /// watching — confirmed against two separate real incidents (a
-    /// dip-then-recover and a silent undercount that self-corrected after
-    /// an overnight gap) that a snapshot-diff fix could paper over but
-    /// never fully prevent.
-    /// </summary>
-    public static int GetPromptCountInRange(DateTimeOffset since, DateTimeOffset? until)
-    {
-        if (!Directory.Exists(SessionsRoot)) return 0;
-
-        List<string> files;
-        try { files = Directory.EnumerateFiles(SessionsRoot, "*.jsonl", SearchOption.AllDirectories).ToList(); }
-        catch { return 0; }
-
-        var total = 0;
-        foreach (var file in files)
-        {
-            total += CountPromptsInRange(file, since, until);
-        }
-        return total;
-    }
-
-    private static int CountPromptsInRange(string path, DateTimeOffset since, DateTimeOffset? until)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                return CountPromptsInRangeCore(path, since, until);
-            }
-            catch (IOException) when (attempt < 2)
-            {
-                Thread.Sleep(50);
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-    }
-
-    private static int CountPromptsInRangeCore(string path, DateTimeOffset since, DateTimeOffset? until)
-    {
-        var count = 0;
-        using var reader = new StreamReader(path);
-        string? line;
-        while ((line = reader.ReadLine()) != null)
-        {
-            if (string.IsNullOrEmpty(line)) continue;
-            if (!TryGetRealUserPrompt(line, out var at)) continue;
-            if (at < since || (until.HasValue && at >= until.Value)) continue;
-            count++;
-        }
-        return count;
+        return (totals, timestamps);
     }
 
     /// <summary>
@@ -199,13 +149,13 @@ internal static class CodexProjectsHelper
     /// project's total jumped by 10 between two samples with zero rollout
     /// files touched on disk in between).
     /// </summary>
-    private static (string? Cwd, int PromptCount) ReadCwdAndCountPrompts(string path)
+    private static (string? Cwd, List<DateTimeOffset> Timestamps) ReadCwdAndPromptTimestamps(string path)
     {
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                return ReadCwdAndCountPromptsCore(path);
+                return ReadCwdAndPromptTimestampsCore(path);
             }
             catch (IOException) when (attempt < 2)
             {
@@ -214,15 +164,15 @@ internal static class CodexProjectsHelper
             catch
             {
                 // Malformed file, or still locked after retrying — return nothing gathered.
-                return (null, 0);
+                return (null, new List<DateTimeOffset>());
             }
         }
     }
 
-    private static (string? Cwd, int PromptCount) ReadCwdAndCountPromptsCore(string path)
+    private static (string? Cwd, List<DateTimeOffset> Timestamps) ReadCwdAndPromptTimestampsCore(string path)
     {
         string? cwd = null;
-        var count = 0;
+        var timestamps = new List<DateTimeOffset>();
         using var reader = new StreamReader(path);
         var isFirstLine = true;
         string? line;
@@ -234,9 +184,9 @@ internal static class CodexProjectsHelper
                 cwd = TryExtractSessionMetaCwd(line);
                 isFirstLine = false;
             }
-            if (IsRealUserPrompt(line)) count++;
+            if (TryGetRealUserPrompt(line, out var at)) timestamps.Add(at);
         }
-        return (cwd, count);
+        return (cwd, timestamps);
     }
 
     private static string? TryExtractSessionMetaCwd(string firstLine)
@@ -261,16 +211,9 @@ internal static class CodexProjectsHelper
     /// synthetic user-role turns (environment context, permission
     /// instructions, etc.) that are never something a human actually
     /// typed; those all show up as XML-ish tag-wrapped text, which real
-    /// prompts essentially never start with.
-    /// </summary>
-    private static bool IsRealUserPrompt(string line) => TryGetRealUserPrompt(line, out _);
-
-    /// <summary>
-    /// Same detection as before, plus the entry's own embedded
-    /// "timestamp" field — used by GetPromptCountInRange to filter by
-    /// calendar range directly from the data itself, rather than diffing
-    /// periodic external snapshots (see that method's own doc comment for
-    /// why that distinction matters).
+    /// prompts essentially never start with. Also captures the entry's own
+    /// embedded "timestamp" field — see ScanPrompts's doc comment for why
+    /// that's collected here instead of relying on periodic snapshots.
     /// </summary>
     private static bool TryGetRealUserPrompt(string line, out DateTimeOffset at)
     {

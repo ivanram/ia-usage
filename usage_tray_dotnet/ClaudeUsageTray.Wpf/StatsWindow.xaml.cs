@@ -44,6 +44,7 @@ public partial class StatsWindow : Window
     private readonly List<string> _serviceNames;
     private readonly UsageHistoryStore _historyStore;
     private readonly PromptCountStore _promptCountStore;
+    private readonly PromptScanCache _promptScanCache;
 
     private readonly double _defaultWidth;
     private readonly double _defaultHeight;
@@ -81,12 +82,13 @@ public partial class StatsWindow : Window
     /// once a window handle (and therefore DPI/monitor info) actually
     /// exists, the same way <see cref="OnMaximizeClick"/> already does.
     /// </summary>
-    public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, PromptCountStore promptCountStore, Rect anchorBounds)
+    public StatsWindow(List<string> serviceNames, UsageHistoryStore historyStore, PromptCountStore promptCountStore, PromptScanCache promptScanCache, Rect anchorBounds)
     {
         InitializeComponent();
         _serviceNames = serviceNames;
         _historyStore = historyStore;
         _promptCountStore = promptCountStore;
+        _promptScanCache = promptScanCache;
         _anchorBounds = anchorBounds;
         Title = Strings.T("stats.title");
 
@@ -638,26 +640,16 @@ public partial class StatsWindow : Window
         _ => new List<AgentTask>(),
     };
 
-    /// <summary>
-    /// Live scan straight from the transcripts, filtered by each prompt's
-    /// own embedded timestamp — not a PromptCountStore snapshot diff, which
-    /// used to occasionally misreport a range's "new prompts" as a burst
-    /// when a transcript file had been unreadable during earlier sampling
-    /// ticks (see CodexProjectsHelper.GetPromptCountInRange for the full story).
-    /// </summary>
-    private static int GetAgentPromptCountInRange(string agent, DateTimeOffset since, DateTimeOffset? until) => agent switch
-    {
-        "Claude Code" => ClaudeCodeProjectsHelper.GetPromptCountInRange(since, until),
-        "Codex" => CodexProjectsHelper.GetPromptCountInRange(since, until),
-        _ => 0,
-    };
+    // Both read PromptScanCache — an in-memory filter over the last
+    // background scan, refreshed on TrayOrchestrator's 60-minute timer —
+    // rather than rescanning every transcript file live. That used to
+    // happen on every Render() (window open, every range-tab click) and
+    // was pegging the CPU; a full-transcript scan is fine once an hour in
+    // the background, not fine on every UI interaction.
+    private int GetAgentPromptCountInRange(string agent, DateTimeOffset since, DateTimeOffset? until) =>
+        _promptScanCache.PromptCountInRange(agent, since, until);
 
-    private static int GetAgentTotalPromptCount(string agent) => agent switch
-    {
-        "Claude Code" => ClaudeCodeProjectsHelper.GetPromptCountsByProject().Values.Sum(),
-        "Codex" => CodexProjectsHelper.GetPromptCountsByProject().Values.Sum(),
-        _ => 0,
-    };
+    private int GetAgentTotalPromptCount(string agent) => _promptScanCache.TotalPromptCount(agent);
 
     /// <summary>
     /// One row containing BOTH the always-on full-history card and the

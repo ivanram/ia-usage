@@ -111,13 +111,27 @@ internal static class ClaudeCodeProjectsHelper
     /// Only ever called from the periodic sampling timer (see
     /// TrayOrchestrator), never from a user-triggered path like /proyectos,
     /// since a long-running session's transcript can run into the hundreds
-    /// of MB — fine on a 30-minute cadence, not fine on every command.
+    /// of MB — fine on a 60-minute cadence, not fine on every command.
     /// </summary>
-    public static Dictionary<string, int> GetPromptCountsByProject()
+    public static Dictionary<string, int> GetPromptCountsByProject() => ScanPrompts().TotalsByProject;
+
+    /// <summary>
+    /// One full pass over every session file, gathering BOTH per-project
+    /// totals and every real prompt's own embedded timestamp — the latter
+    /// lets range-scoped counts (Hoy/Ayer/Semana/Mes) be computed by
+    /// filtering timestamps already in memory instead of rescanning the
+    /// transcripts from disk for every tab click, which is what made
+    /// opening the Stats window or switching range tabs peg the CPU. See
+    /// CodexProjectsHelper's identical method and PromptScanCache for the
+    /// full reasoning and how this is meant to be consumed (cached,
+    /// refreshed on a timer, never called directly from UI code).
+    /// </summary>
+    public static (Dictionary<string, int> TotalsByProject, List<DateTimeOffset> Timestamps) ScanPrompts()
     {
         var root = ProjectsRoot;
-        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (!Directory.Exists(root)) return result;
+        var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var timestamps = new List<DateTimeOffset>();
+        if (!Directory.Exists(root)) return (totals, timestamps);
 
         foreach (var dir in Directory.EnumerateDirectories(root))
         {
@@ -130,72 +144,13 @@ internal static class ClaudeCodeProjectsHelper
             var total = 0;
             foreach (var file in sessionFiles)
             {
-                total += CountPromptsInFile(file);
+                var fileTimestamps = CountPromptTimestampsInFile(file);
+                total += fileTimestamps.Count;
+                timestamps.AddRange(fileTimestamps);
             }
-            result[projectPath] = total;
+            totals[projectPath] = total;
         }
-        return result;
-    }
-
-    /// <summary>
-    /// Total real user prompts with their OWN embedded timestamp inside
-    /// [since, until) — computed by scanning the transcripts fresh right
-    /// now, not by diffing periodic external snapshots the way the "Nuevos"
-    /// dashboard/chart values used to. See CodexProjectsHelper's identical
-    /// method for the full reasoning and the confirmed real-world repro.
-    /// </summary>
-    public static int GetPromptCountInRange(DateTimeOffset since, DateTimeOffset? until)
-    {
-        var root = ProjectsRoot;
-        if (!Directory.Exists(root)) return 0;
-
-        var total = 0;
-        foreach (var dir in Directory.EnumerateDirectories(root))
-        {
-            List<string> sessionFiles;
-            try { sessionFiles = Directory.EnumerateFiles(dir, "*.jsonl").ToList(); }
-            catch { continue; }
-
-            foreach (var file in sessionFiles)
-            {
-                total += CountPromptsInFileRange(file, since, until);
-            }
-        }
-        return total;
-    }
-
-    private static int CountPromptsInFileRange(string sessionFile, DateTimeOffset since, DateTimeOffset? until)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            try
-            {
-                return CountPromptsInFileRangeCore(sessionFile, since, until);
-            }
-            catch (IOException) when (attempt < 2)
-            {
-                Thread.Sleep(50);
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-    }
-
-    private static int CountPromptsInFileRangeCore(string sessionFile, DateTimeOffset since, DateTimeOffset? until)
-    {
-        var count = 0;
-        using var reader = new StreamReader(sessionFile);
-        string? line;
-        while ((line = reader.ReadLine()) != null)
-        {
-            if (string.IsNullOrEmpty(line)) continue;
-            if (!TryGetRealUserPrompt(line, out var at)) continue;
-            if (at < since || (until.HasValue && at >= until.Value)) continue;
-            count++;
-        }
-        return count;
+        return (totals, timestamps);
     }
 
     /// <summary>
@@ -208,13 +163,13 @@ internal static class ClaudeCodeProjectsHelper
     /// were never actually typed. See CodexProjectsHelper's identical fix
     /// for the confirmed real-world repro.
     /// </summary>
-    private static int CountPromptsInFile(string sessionFile)
+    private static List<DateTimeOffset> CountPromptTimestampsInFile(string sessionFile)
     {
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                return CountPromptsInFileCore(sessionFile);
+                return CountPromptTimestampsInFileCore(sessionFile);
             }
             catch (IOException) when (attempt < 2)
             {
@@ -223,21 +178,21 @@ internal static class ClaudeCodeProjectsHelper
             catch
             {
                 // Malformed file, or still locked after retrying.
-                return 0;
+                return new List<DateTimeOffset>();
             }
         }
     }
 
-    private static int CountPromptsInFileCore(string sessionFile)
+    private static List<DateTimeOffset> CountPromptTimestampsInFileCore(string sessionFile)
     {
-        var count = 0;
+        var timestamps = new List<DateTimeOffset>();
         using var reader = new StreamReader(sessionFile);
         string? line;
         while ((line = reader.ReadLine()) != null)
         {
-            if (!string.IsNullOrEmpty(line) && IsRealUserPrompt(line)) count++;
+            if (!string.IsNullOrEmpty(line) && TryGetRealUserPrompt(line, out var at)) timestamps.Add(at);
         }
-        return count;
+        return timestamps;
     }
 
     /// <summary>
@@ -245,16 +200,9 @@ internal static class ClaudeCodeProjectsHelper
     /// subagent/sidechain turn and isn't secretly a tool-result submission
     /// — Claude Code logs a tool's output being handed back as "type":"user"
     /// too, distinguishable by its "content" being an array of ONLY
-    /// tool_result blocks rather than a plain string or a text block.
-    /// </summary>
-    private static bool IsRealUserPrompt(string line) => TryGetRealUserPrompt(line, out _);
-
-    /// <summary>
-    /// Same detection as before, plus the entry's own embedded
-    /// "timestamp" field — used by GetPromptCountInRange to filter by
-    /// calendar range directly from the data itself, rather than diffing
-    /// periodic external snapshots (see that method's own doc comment for
-    /// why that distinction matters).
+    /// tool_result blocks rather than a plain string or a text block. Also
+    /// captures the entry's own embedded "timestamp" field — see
+    /// ScanPrompts's doc comment for why that's collected here.
     /// </summary>
     private static bool TryGetRealUserPrompt(string line, out DateTimeOffset at)
     {

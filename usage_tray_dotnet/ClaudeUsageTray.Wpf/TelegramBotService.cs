@@ -35,6 +35,7 @@ public sealed class TelegramBotService
     private readonly Func<IEnumerable<UsageSnapshot>> _getSnapshots;
     private readonly UsageHistoryStore _historyStore;
     private readonly PromptCountStore _promptCountStore;
+    private readonly PromptScanCache _promptScanCache;
     private CancellationTokenSource? _cts;
 
     // Kept as instance state (rather than locals captured by the receive
@@ -52,11 +53,12 @@ public sealed class TelegramBotService
     private readonly List<int> _remainingQuoteIndices = new();
     private readonly Random _quoteRandom = new();
 
-    public TelegramBotService(Func<IEnumerable<UsageSnapshot>> getSnapshots, UsageHistoryStore historyStore, PromptCountStore promptCountStore)
+    public TelegramBotService(Func<IEnumerable<UsageSnapshot>> getSnapshots, UsageHistoryStore historyStore, PromptCountStore promptCountStore, PromptScanCache promptScanCache)
     {
         _getSnapshots = getSnapshots;
         _historyStore = historyStore;
         _promptCountStore = promptCountStore;
+        _promptScanCache = promptScanCache;
     }
 
     public void Start(string token, long? boundChatId, Action<long> onBound)
@@ -163,15 +165,14 @@ public sealed class TelegramBotService
                     var tasks = ClaudeCodeProjectsHelper.GetRecentTasks()
                         .Concat(CodexProjectsHelper.GetRecentTasks())
                         .ToList();
-                    // Live full-transcript scans — not a PromptCountStore
-                    // snapshot, which could get stuck reflecting a moment
-                    // when some transcript file was unreadable (see
-                    // ClaudeCodeProjectsHelper/CodexProjectsHelper's
-                    // GetPromptCountInRange doc comment for the full story).
+                    // Cached from the last background scan (see
+                    // PromptScanCache) rather than a live rescan on every
+                    // command — a full-transcript scan is fine once an
+                    // hour in the background, not fine on every /proyectos.
                     var promptTotals = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase)
                     {
-                        ["Claude Code"] = ClaudeCodeProjectsHelper.GetPromptCountsByProject(),
-                        ["Codex"] = CodexProjectsHelper.GetPromptCountsByProject(),
+                        ["Claude Code"] = _promptScanCache.Get("Claude Code").TotalsByProject,
+                        ["Codex"] = _promptScanCache.Get("Codex").TotalsByProject,
                     };
                     await bot.SendMessage(chatId, BuildProjectsReply(tasks, promptTotals), parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
                     return;
@@ -467,12 +468,7 @@ public sealed class TelegramBotService
             };
             var projectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var taskCount = tasks.Count;
-            var promptCount = agent switch
-            {
-                "Claude Code" => ClaudeCodeProjectsHelper.GetPromptCountsByProject().Values.Sum(),
-                "Codex" => CodexProjectsHelper.GetPromptCountsByProject().Values.Sum(),
-                _ => 0,
-            };
+            var promptCount = _promptScanCache.TotalPromptCount(agent);
 
             if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
 

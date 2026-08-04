@@ -44,6 +44,7 @@ public sealed class TrayOrchestrator : IDisposable
     private readonly TelegramBotService _telegram;
     private readonly UsageHistoryStore _historyStore = new();
     private readonly PromptCountStore _promptCountStore = new();
+    private readonly PromptScanCache _promptScanCache = new();
     private readonly DispatcherTimer _promptCountTimer = new() { Interval = TimeSpan.FromMinutes(60) };
     // Slightly under the timer's own 60-minute cadence so normal jitter
     // never blocks a legitimate tick, while still catching the case that
@@ -59,7 +60,7 @@ public sealed class TrayOrchestrator : IDisposable
         _telegram = new TelegramBotService(
             () => _providers.Where(IsEnabled)
                 .Select(p => _lastSnapshots.TryGetValue(p.Name, out var s) ? s : new UsageSnapshot { ServiceName = p.Name, Ok = false, ErrorMessage = Strings.T("loading") }),
-            _historyStore, _promptCountStore);
+            _historyStore, _promptCountStore, _promptScanCache);
     }
 
     public void Start()
@@ -337,7 +338,7 @@ public sealed class TrayOrchestrator : IDisposable
             return;
         }
 
-        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore, _promptCountStore, anchor);
+        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore, _promptCountStore, _promptScanCache, anchor);
         _statsWindow.Closed += (s, e) => _statsWindow = null;
         _statsWindow.Show();
     }
@@ -460,12 +461,15 @@ public sealed class TrayOrchestrator : IDisposable
 
     /// <summary>
     /// Snapshots each coding agent's current per-project prompt counts into
-    /// _promptCountStore — a full transcript scan (unlike the /proyectos
-    /// metadata reads, which only touch a file's first line), so this runs
-    /// on its own 30-minute timer rather than alongside the usage refresh.
-    /// The actual file I/O happens off the UI thread; only the (cheap)
-    /// store writes need to happen at all, and those are synchronous SQLite
-    /// calls fast enough not to matter.
+    /// _promptCountStore (feeding the Stats window chart's trend line) and
+    /// refreshes _promptScanCache (feeding the dashboard cards and
+    /// /proyectos) — a full transcript scan, unlike the /proyectos task
+    /// list's own metadata reads which only touch a file's first line, so
+    /// this runs on its own 60-minute timer rather than alongside the usage
+    /// refresh, and — just as importantly — rather than on every Stats
+    /// window open or range-tab click, which used to redo this same scan
+    /// live and peg the CPU. The actual file I/O happens off the UI thread;
+    /// only the (cheap) store write and cache update happen synchronously.
     /// </summary>
     private async Task SamplePromptCountsAsync()
     {
@@ -478,12 +482,14 @@ public sealed class TrayOrchestrator : IDisposable
             }
 
             var now = DateTimeOffset.UtcNow;
-            var (claudeCodeCounts, codexCounts) = await Task.Run(() =>
-                (ClaudeCodeProjectsHelper.GetPromptCountsByProject(), CodexProjectsHelper.GetPromptCountsByProject()));
+            var (claudeCodeScan, codexScan) = await Task.Run(() =>
+                (ClaudeCodeProjectsHelper.ScanPrompts(), CodexProjectsHelper.ScanPrompts()));
 
-            _promptCountStore.RecordSnapshot("Claude Code", claudeCodeCounts, now);
-            _promptCountStore.RecordSnapshot("Codex", codexCounts, now);
-            Log($"SamplePromptCountsAsync: Claude Code {claudeCodeCounts.Count} project(s), Codex {codexCounts.Count} project(s)");
+            _promptCountStore.RecordSnapshot("Claude Code", claudeCodeScan.TotalsByProject, now);
+            _promptCountStore.RecordSnapshot("Codex", codexScan.TotalsByProject, now);
+            _promptScanCache.Set("Claude Code", claudeCodeScan.TotalsByProject, claudeCodeScan.Timestamps);
+            _promptScanCache.Set("Codex", codexScan.TotalsByProject, codexScan.Timestamps);
+            Log($"SamplePromptCountsAsync: Claude Code {claudeCodeScan.TotalsByProject.Count} project(s), Codex {codexScan.TotalsByProject.Count} project(s)");
         }
         catch (Exception ex)
         {
