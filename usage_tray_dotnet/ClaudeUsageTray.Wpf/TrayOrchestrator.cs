@@ -66,6 +66,7 @@ public sealed class TrayOrchestrator : IDisposable
     {
         Strings.Current = _settings.Language;
         ApplyTheme();
+        AutoStartHelper.SyncIfEnabled();
 
         PopulateTrayMenu();
         _trayMenu.WarmUp();

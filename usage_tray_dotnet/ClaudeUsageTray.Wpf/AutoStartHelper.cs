@@ -20,6 +20,47 @@ internal static class AutoStartHelper
         else if (File.Exists(ShortcutPath)) File.Delete(ShortcutPath);
     }
 
+    /// <summary>
+    /// Call once per app startup. The shortcut's target is whatever exe
+    /// path was current the moment it was last written — this app has no
+    /// stable install location (each release/rebuild is its own
+    /// version-numbered exe), so a shortcut written against an older
+    /// version silently stops working the moment that file is gone: no
+    /// error at logon, it just doesn't launch. Re-pointing it at whatever
+    /// exe is running right now, every launch, makes "iniciar con Windows"
+    /// self-heal instead of quietly going stale after the next update.
+    /// </summary>
+    public static void SyncIfEnabled()
+    {
+        if (!IsEnabled()) return;
+        if (TargetMatches(Environment.ProcessPath!)) return;
+        Create();
+    }
+
+    private static bool TargetMatches(string exePath)
+    {
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null) return false;
+            dynamic shell = Activator.CreateInstance(shellType)!;
+            try
+            {
+                dynamic shortcut = shell.CreateShortcut(ShortcutPath);
+                string target = shortcut.TargetPath;
+                return string.Equals(target, exePath, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(shell);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static void Create()
     {
         var exePath = Environment.ProcessPath!;
