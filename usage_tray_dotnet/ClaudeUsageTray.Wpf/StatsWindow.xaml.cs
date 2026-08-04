@@ -639,6 +639,27 @@ public partial class StatsWindow : Window
     };
 
     /// <summary>
+    /// Live scan straight from the transcripts, filtered by each prompt's
+    /// own embedded timestamp — not a PromptCountStore snapshot diff, which
+    /// used to occasionally misreport a range's "new prompts" as a burst
+    /// when a transcript file had been unreadable during earlier sampling
+    /// ticks (see CodexProjectsHelper.GetPromptCountInRange for the full story).
+    /// </summary>
+    private static int GetAgentPromptCountInRange(string agent, DateTimeOffset since, DateTimeOffset? until) => agent switch
+    {
+        "Claude Code" => ClaudeCodeProjectsHelper.GetPromptCountInRange(since, until),
+        "Codex" => CodexProjectsHelper.GetPromptCountInRange(since, until),
+        _ => 0,
+    };
+
+    private static int GetAgentTotalPromptCount(string agent) => agent switch
+    {
+        "Claude Code" => ClaudeCodeProjectsHelper.GetPromptCountsByProject().Values.Sum(),
+        "Codex" => CodexProjectsHelper.GetPromptCountsByProject().Values.Sum(),
+        _ => 0,
+    };
+
+    /// <summary>
     /// One row containing BOTH the always-on full-history card and the
     /// active-tab-scoped card per coding agent, side by side — a prior
     /// version split these into two separate stacked rows (one per
@@ -678,7 +699,7 @@ public partial class StatsWindow : Window
             var inRange = tasksByAgent[agent].Where(t => t.LastActivity >= since && (until is null || t.LastActivity < until)).ToList();
             var rangeProjectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var rangeTaskCount = inRange.Count;
-            var rangePromptCount = _promptCountStore.GetAgentTotalInRange(agent, since, until);
+            var rangePromptCount = GetAgentPromptCountInRange(agent, since, until);
             // Always shown, even all-zero — a card that silently disappears
             // instead of reading "0" is more confusing than reassuring: it
             // leaves you wondering whether the agent just isn't tracked at
@@ -691,11 +712,10 @@ public partial class StatsWindow : Window
             var tasks = tasksByAgent[agent];
             var totalProjectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var totalTaskCount = tasks.Count;
-            // Latest known cumulative total per project — each snapshot
-            // already holds a full-transcript scan, so the latest one IS
-            // the all-time total (see PromptCountStore/GetPromptCountsByProject),
-            // not a delta sum.
-            var totalPromptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
+            // A live full-transcript scan, not the latest PromptCountStore
+            // snapshot — always accurate, never stuck at a value read
+            // while some transcript file happened to be unreadable.
+            var totalPromptCount = GetAgentTotalPromptCount(agent);
             wrap.Children.Add(BuildDashboardCard(agent, totalsLabel, totalPromptCount, totalProjectCount, totalTaskCount, textPrimary, textSecondary, totalsCardBackground));
         }
 

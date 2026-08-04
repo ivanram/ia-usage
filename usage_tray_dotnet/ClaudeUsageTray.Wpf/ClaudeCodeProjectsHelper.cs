@@ -138,6 +138,67 @@ internal static class ClaudeCodeProjectsHelper
     }
 
     /// <summary>
+    /// Total real user prompts with their OWN embedded timestamp inside
+    /// [since, until) — computed by scanning the transcripts fresh right
+    /// now, not by diffing periodic external snapshots the way the "Nuevos"
+    /// dashboard/chart values used to. See CodexProjectsHelper's identical
+    /// method for the full reasoning and the confirmed real-world repro.
+    /// </summary>
+    public static int GetPromptCountInRange(DateTimeOffset since, DateTimeOffset? until)
+    {
+        var root = ProjectsRoot;
+        if (!Directory.Exists(root)) return 0;
+
+        var total = 0;
+        foreach (var dir in Directory.EnumerateDirectories(root))
+        {
+            List<string> sessionFiles;
+            try { sessionFiles = Directory.EnumerateFiles(dir, "*.jsonl").ToList(); }
+            catch { continue; }
+
+            foreach (var file in sessionFiles)
+            {
+                total += CountPromptsInFileRange(file, since, until);
+            }
+        }
+        return total;
+    }
+
+    private static int CountPromptsInFileRange(string sessionFile, DateTimeOffset since, DateTimeOffset? until)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return CountPromptsInFileRangeCore(sessionFile, since, until);
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                Thread.Sleep(50);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+    }
+
+    private static int CountPromptsInFileRangeCore(string sessionFile, DateTimeOffset since, DateTimeOffset? until)
+    {
+        var count = 0;
+        using var reader = new StreamReader(sessionFile);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (string.IsNullOrEmpty(line)) continue;
+            if (!TryGetRealUserPrompt(line, out var at)) continue;
+            if (at < since || (until.HasValue && at >= until.Value)) continue;
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>
     /// Retries a couple of times on an IOException before giving up — a
     /// session file transiently locked by something else entirely (an
     /// antivirus scan, OneDrive/cloud sync, the Windows Search indexer)
@@ -186,8 +247,18 @@ internal static class ClaudeCodeProjectsHelper
     /// too, distinguishable by its "content" being an array of ONLY
     /// tool_result blocks rather than a plain string or a text block.
     /// </summary>
-    private static bool IsRealUserPrompt(string line)
+    private static bool IsRealUserPrompt(string line) => TryGetRealUserPrompt(line, out _);
+
+    /// <summary>
+    /// Same detection as before, plus the entry's own embedded
+    /// "timestamp" field — used by GetPromptCountInRange to filter by
+    /// calendar range directly from the data itself, rather than diffing
+    /// periodic external snapshots (see that method's own doc comment for
+    /// why that distinction matters).
+    /// </summary>
+    private static bool TryGetRealUserPrompt(string line, out DateTimeOffset at)
     {
+        at = default;
         try
         {
             using var doc = JsonDocument.Parse(line);
@@ -196,12 +267,19 @@ internal static class ClaudeCodeProjectsHelper
             if (root.TryGetProperty("isSidechain", out var sidechain) && sidechain.ValueKind == JsonValueKind.True) return false;
             if (!root.TryGetProperty("message", out var message) || !message.TryGetProperty("content", out var content)) return false;
 
-            return content.ValueKind switch
+            var isReal = content.ValueKind switch
             {
                 JsonValueKind.String => true,
                 JsonValueKind.Array => content.EnumerateArray().Any(b => b.TryGetProperty("type", out var t) && t.GetString() == "text"),
                 _ => false,
             };
+            if (!isReal) return false;
+
+            if (root.TryGetProperty("timestamp", out var tsProp) && tsProp.ValueKind == JsonValueKind.String)
+            {
+                DateTimeOffset.TryParse(tsProp.GetString(), out at);
+            }
+            return true;
         }
         catch
         {

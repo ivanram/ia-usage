@@ -121,6 +121,72 @@ internal static class CodexProjectsHelper
     }
 
     /// <summary>
+    /// Total real user prompts with their OWN embedded timestamp inside
+    /// [since, until) — computed by scanning the transcripts fresh right
+    /// now, not by diffing periodic external snapshots the way the "Nuevos"
+    /// dashboard/chart values used to. That diffing approach assumed every
+    /// scan sees a project's true total, so any one bad read (a file
+    /// transiently or even persistently locked by something else — an
+    /// antivirus scan, cloud sync, the Windows Search indexer) got recorded
+    /// as fact, and the next GOOD read then looked like a burst of
+    /// brand-new prompts that were never actually typed. A prompt's own
+    /// timestamp doesn't care when, or how reliably, we happened to be
+    /// watching — confirmed against two separate real incidents (a
+    /// dip-then-recover and a silent undercount that self-corrected after
+    /// an overnight gap) that a snapshot-diff fix could paper over but
+    /// never fully prevent.
+    /// </summary>
+    public static int GetPromptCountInRange(DateTimeOffset since, DateTimeOffset? until)
+    {
+        if (!Directory.Exists(SessionsRoot)) return 0;
+
+        List<string> files;
+        try { files = Directory.EnumerateFiles(SessionsRoot, "*.jsonl", SearchOption.AllDirectories).ToList(); }
+        catch { return 0; }
+
+        var total = 0;
+        foreach (var file in files)
+        {
+            total += CountPromptsInRange(file, since, until);
+        }
+        return total;
+    }
+
+    private static int CountPromptsInRange(string path, DateTimeOffset since, DateTimeOffset? until)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return CountPromptsInRangeCore(path, since, until);
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                Thread.Sleep(50);
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+    }
+
+    private static int CountPromptsInRangeCore(string path, DateTimeOffset since, DateTimeOffset? until)
+    {
+        var count = 0;
+        using var reader = new StreamReader(path);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (string.IsNullOrEmpty(line)) continue;
+            if (!TryGetRealUserPrompt(line, out var at)) continue;
+            if (at < since || (until.HasValue && at >= until.Value)) continue;
+            count++;
+        }
+        return count;
+    }
+
+    /// <summary>
     /// One pass over the file covers both the session_meta line 0 (for cwd)
     /// and every line's prompt check, instead of opening the file twice.
     /// Retries a couple of times on an IOException before giving up — a
@@ -197,8 +263,18 @@ internal static class CodexProjectsHelper
     /// typed; those all show up as XML-ish tag-wrapped text, which real
     /// prompts essentially never start with.
     /// </summary>
-    private static bool IsRealUserPrompt(string line)
+    private static bool IsRealUserPrompt(string line) => TryGetRealUserPrompt(line, out _);
+
+    /// <summary>
+    /// Same detection as before, plus the entry's own embedded
+    /// "timestamp" field — used by GetPromptCountInRange to filter by
+    /// calendar range directly from the data itself, rather than diffing
+    /// periodic external snapshots (see that method's own doc comment for
+    /// why that distinction matters).
+    /// </summary>
+    private static bool TryGetRealUserPrompt(string line, out DateTimeOffset at)
     {
+        at = default;
         try
         {
             using var doc = JsonDocument.Parse(line);
@@ -209,14 +285,21 @@ internal static class CodexProjectsHelper
             if (!payload.TryGetProperty("role", out var roleProp) || roleProp.GetString() != "user") return false;
             if (!payload.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) return false;
 
+            var hasRealPrompt = false;
             foreach (var block in content.EnumerateArray())
             {
                 if (!block.TryGetProperty("type", out var blockType) || blockType.GetString() != "input_text") continue;
                 if (!block.TryGetProperty("text", out var textProp) || textProp.ValueKind != JsonValueKind.String) continue;
                 var text = textProp.GetString();
-                if (!string.IsNullOrWhiteSpace(text) && !text.TrimStart().StartsWith('<')) return true;
+                if (!string.IsNullOrWhiteSpace(text) && !text.TrimStart().StartsWith('<')) { hasRealPrompt = true; break; }
             }
-            return false;
+            if (!hasRealPrompt) return false;
+
+            if (root.TryGetProperty("timestamp", out var tsProp) && tsProp.ValueKind == JsonValueKind.String)
+            {
+                DateTimeOffset.TryParse(tsProp.GetString(), out at);
+            }
+            return true;
         }
         catch
         {

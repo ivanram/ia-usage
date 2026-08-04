@@ -163,14 +163,15 @@ public sealed class TelegramBotService
                     var tasks = ClaudeCodeProjectsHelper.GetRecentTasks()
                         .Concat(CodexProjectsHelper.GetRecentTasks())
                         .ToList();
-                    // Latest totals only — refreshed at most every 30 min by
-                    // TrayOrchestrator's sampling timer, not a live re-scan
-                    // (see ClaudeCodeProjectsHelper/CodexProjectsHelper's
-                    // GetPromptCountsByProject doc comment for why).
+                    // Live full-transcript scans — not a PromptCountStore
+                    // snapshot, which could get stuck reflecting a moment
+                    // when some transcript file was unreadable (see
+                    // ClaudeCodeProjectsHelper/CodexProjectsHelper's
+                    // GetPromptCountInRange doc comment for the full story).
                     var promptTotals = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase)
                     {
-                        ["Claude Code"] = _promptCountStore.GetLatestTotalsByProject("Claude Code"),
-                        ["Codex"] = _promptCountStore.GetLatestTotalsByProject("Codex"),
+                        ["Claude Code"] = ClaudeCodeProjectsHelper.GetPromptCountsByProject(),
+                        ["Codex"] = CodexProjectsHelper.GetPromptCountsByProject(),
                     };
                     await bot.SendMessage(chatId, BuildProjectsReply(tasks, promptTotals), parseMode: ParseMode.Markdown, replyMarkup: Keyboard, cancellationToken: innerCt);
                     return;
@@ -466,7 +467,12 @@ public sealed class TelegramBotService
             };
             var projectCount = tasks.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var taskCount = tasks.Count;
-            var promptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
+            var promptCount = agent switch
+            {
+                "Claude Code" => ClaudeCodeProjectsHelper.GetPromptCountsByProject().Values.Sum(),
+                "Codex" => CodexProjectsHelper.GetPromptCountsByProject().Values.Sum(),
+                _ => 0,
+            };
 
             if (promptCount == 0 && projectCount == 0 && taskCount == 0) continue;
 
