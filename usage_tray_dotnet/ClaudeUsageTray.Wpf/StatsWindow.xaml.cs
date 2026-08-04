@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -59,6 +60,14 @@ public partial class StatsWindow : Window
     // so flipping back to it re-shows the same day instead of forgetting it.
     private DateTimeOffset? _customDate;
     private Popup? _datePickerPopup;
+
+    // "Vista de calendario" is a separate display MODE, not another value
+    // of _range — it replaces the chart section with a month grid while
+    // the dashboard cards above keep responding to _range exactly as
+    // before. _calendarMonth is the first-of-month currently shown, kept
+    // around across toggles/navigation the same way _customDate is.
+    private bool _showCalendar;
+    private DateTimeOffset _calendarMonth = new(DateTime.Now.Year, DateTime.Now.Month, 1, 0, 0, 0, DateTimeOffset.Now.Offset);
 
     private bool _isMaximized;
     private double _preMaximizeWidth, _preMaximizeHeight, _preMaximizeLeft, _preMaximizeTop;
@@ -289,6 +298,43 @@ public partial class StatsWindow : Window
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.week"), StatsRange.Week, textSecondary, accent));
         RangeSelectorHost.Children.Add(BuildRangeTab(Strings.T("stats.range.month"), StatsRange.Month, textSecondary, accent));
         RangeSelectorHost.Children.Add(BuildCustomDateTab(textSecondary, accent));
+        RangeSelectorHost.Children.Add(BuildCalendarViewToggle(textSecondary, accent));
+    }
+
+    /// <summary>
+    /// Same tab look as the others, but it's a MODE toggle rather than a
+    /// value in the same mutually-exclusive group as Hoy/Ayer/Semana/Mes —
+    /// switching it on replaces the chart section with a month calendar
+    /// (see BuildCalendarView) while the dashboard cards above keep
+    /// responding to whatever range tab is separately selected.
+    /// </summary>
+    private FrameworkElement BuildCalendarViewToggle(Brush textSecondary, Brush accent)
+    {
+        var isActive = _showCalendar;
+        var activeBg = accent.Clone();
+        activeBg.Opacity = 0.14;
+
+        var border = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 5, 12, 5),
+            Margin = new Thickness(0, 0, 6, 0),
+            Background = isActive ? activeBg : Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            Child = new TextBlock
+            {
+                Text = Strings.T("stats.calendarview"),
+                FontSize = 12,
+                FontWeight = isActive ? FontWeights.Medium : FontWeights.Normal,
+                Foreground = isActive ? accent : textSecondary,
+            },
+        };
+        border.MouseLeftButtonUp += (s, e) =>
+        {
+            _showCalendar = !_showCalendar;
+            Render();
+        };
+        return border;
     }
 
     /// <summary>
@@ -337,7 +383,7 @@ public partial class StatsWindow : Window
         var minDay = daysWithData.Min();
         var maxDay = daysWithData.Max();
 
-        var calendar = new Calendar
+        var calendar = new System.Windows.Controls.Calendar
         {
             SelectionMode = CalendarSelectionMode.SingleDate,
             DisplayDateStart = minDay.ToDateTime(TimeOnly.MinValue),
@@ -402,6 +448,7 @@ public partial class StatsWindow : Window
             {
                 _customDate = new DateTimeOffset(picked, DateTimeOffset.Now.Offset);
                 _range = StatsRange.Custom;
+                _showCalendar = false;
                 popup.IsOpen = false;
                 Render();
             }
@@ -434,8 +481,9 @@ public partial class StatsWindow : Window
         };
         border.MouseLeftButtonUp += (s, e) =>
         {
-            if (_range == range) return;
+            if (_range == range && !_showCalendar) return;
             _range = range;
+            _showCalendar = false;
             Render();
         };
         return border;
@@ -550,6 +598,9 @@ public partial class StatsWindow : Window
 
         BuildRangeSelector(textPrimary, textSecondary, accent);
         BuildPromptModeSelector(textSecondary, promptLineBrush);
+        // Nuevos/Totales only means something for the line chart — nothing
+        // to toggle while the calendar view is showing instead.
+        PromptModeSelectorHost.Visibility = _showCalendar ? Visibility.Collapsed : Visibility.Visible;
 
         var (since, until) = RangeBoundsFor(_range);
         var dashboard = BuildDashboardRow(textPrimary, textSecondary, gridBrush, totalsCardBackground, since, until);
@@ -564,6 +615,12 @@ public partial class StatsWindow : Window
             // scrollbar this whole responsive-sizing pass was meant to fix.
             ContentHost.UpdateLayout();
             dashboardHeight = dashboard.ActualHeight;
+        }
+
+        if (_showCalendar)
+        {
+            ContentHost.Children.Add(BuildCalendarView(textPrimary, textSecondary, accent, gridBrush));
+            return;
         }
 
         if (_serviceNames.Count == 0)
@@ -627,6 +684,205 @@ public partial class StatsWindow : Window
             chartWidth, chartHeight, textPrimary, textSecondary, accent, fillBrush, gridBrush,
             viewportWidth, OnChartZoom, _promptCountStore, promptLineBrush, _promptMode == PromptDisplayMode.Total);
         ContentHost.Children.Add(blocks);
+    }
+
+    /// <summary>
+    /// A normal month grid (weekday header + up to 6 rows of days), each
+    /// cell showing that day's combined Claude Code + Codex prompt total
+    /// and shaded by it relative to the busiest day in the SAME month —
+    /// relative rather than to some fixed scale, so the shading stays
+    /// meaningful as more history accumulates instead of everything
+    /// reading as pale until some arbitrary global max is hit. Pulls
+    /// straight from _promptScanCache (see that class) — no disk access
+    /// here, just filtering timestamps already in memory, however often
+    /// month navigation re-renders this.
+    /// </summary>
+    private FrameworkElement BuildCalendarView(Brush textPrimary, Brush textSecondary, Brush accent, Brush gridBrush)
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+
+        var (minData, _) = GetPromptDataBounds();
+        var thisMonthStart = new DateTimeOffset(DateTime.Now.Year, DateTime.Now.Month, 1, 0, 0, 0, DateTimeOffset.Now.Offset);
+        var canGoPrev = minData is { } minAt && minAt < _calendarMonth;
+        var canGoNext = _calendarMonth.AddMonths(1) <= thisMonthStart;
+
+        var header = new Grid { Margin = new Thickness(4, 0, 4, 14) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var prevButton = BuildCalendarNavButton("‹", canGoPrev, textPrimary, textSecondary);
+        if (canGoPrev) prevButton.MouseLeftButtonUp += (s, e) => { _calendarMonth = _calendarMonth.AddMonths(-1); Render(); };
+        Grid.SetColumn(prevButton, 0);
+        header.Children.Add(prevButton);
+
+        var monthLabel = new TextBlock
+        {
+            Text = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(_calendarMonth.ToString("MMMM yyyy", CultureInfo.CurrentCulture)),
+            FontSize = 14,
+            FontWeight = FontWeights.Medium,
+            Foreground = textPrimary,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(monthLabel, 1);
+        header.Children.Add(monthLabel);
+
+        var nextButton = BuildCalendarNavButton("›", canGoNext, textPrimary, textSecondary);
+        if (canGoNext) nextButton.MouseLeftButtonUp += (s, e) => { _calendarMonth = _calendarMonth.AddMonths(1); Render(); };
+        Grid.SetColumn(nextButton, 2);
+        header.Children.Add(nextButton);
+
+        panel.Children.Add(header);
+
+        // Weekday header — starts on whatever day the current culture
+        // considers the start of the week (Monday for es-ES) rather than
+        // hardcoding Sunday-first.
+        var firstDow = CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+        var weekdayRow = new Grid();
+        for (var i = 0; i < 7; i++) weekdayRow.ColumnDefinitions.Add(new ColumnDefinition());
+        for (var i = 0; i < 7; i++)
+        {
+            var dow = (DayOfWeek)(((int)firstDow + i) % 7);
+            var label = new TextBlock
+            {
+                Text = CultureInfo.CurrentCulture.DateTimeFormat.AbbreviatedDayNames[(int)dow].ToUpper(CultureInfo.CurrentCulture),
+                FontSize = 10,
+                FontWeight = FontWeights.Medium,
+                Foreground = textSecondary,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 6),
+            };
+            Grid.SetColumn(label, i);
+            weekdayRow.Children.Add(label);
+        }
+        panel.Children.Add(weekdayRow);
+
+        var dailyCounts = GetDailyPromptCounts(_calendarMonth);
+        var maxCount = dailyCounts.Count > 0 ? dailyCounts.Values.Max() : 0;
+
+        var daysInMonth = DateTime.DaysInMonth(_calendarMonth.Year, _calendarMonth.Month);
+        var firstOfMonth = new DateTime(_calendarMonth.Year, _calendarMonth.Month, 1);
+        var leadingBlanks = (((int)firstOfMonth.DayOfWeek - (int)firstDow) + 7) % 7;
+        var totalCells = leadingBlanks + daysInMonth;
+        var rows = (int)Math.Ceiling(totalCells / 7.0);
+        var today = DateOnly.FromDateTime(DateTime.Now);
+
+        var grid = new Grid();
+        for (var c = 0; c < 7; c++) grid.ColumnDefinitions.Add(new ColumnDefinition());
+        for (var r = 0; r < rows; r++) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        for (var cellIndex = 0; cellIndex < totalCells; cellIndex++)
+        {
+            var dayNum = cellIndex - leadingBlanks + 1;
+            if (dayNum < 1 || dayNum > daysInMonth) continue;
+
+            var date = DateOnly.FromDateTime(new DateTime(_calendarMonth.Year, _calendarMonth.Month, dayNum));
+            var count = dailyCounts.GetValueOrDefault(date);
+            var isToday = date == today;
+
+            // A floor on the low end so any day with at least one prompt
+            // is visibly tinted rather than nearly-transparent next to a
+            // single outlier day dominating the scale.
+            var intensity = maxCount > 0 ? count / (double)maxCount : 0;
+            var cellBg = accent.Clone();
+            cellBg.Opacity = count > 0 ? Math.Clamp(0.14 + intensity * 0.66, 0.14, 0.8) : 0.0;
+
+            var dayNumberText = new TextBlock
+            {
+                Text = dayNum.ToString(),
+                FontSize = 11,
+                Foreground = textSecondary,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            var countText = new TextBlock
+            {
+                Text = count > 0 ? count.ToString() : "–",
+                FontSize = 14,
+                FontWeight = count > 0 ? FontWeights.Bold : FontWeights.Normal,
+                Foreground = count > 0 ? textPrimary : textSecondary,
+                Opacity = count > 0 ? 1.0 : 0.4,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 3, 0, 0),
+            };
+            var cellContent = new StackPanel();
+            cellContent.Children.Add(dayNumberText);
+            cellContent.Children.Add(countText);
+
+            var cell = new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                Margin = new Thickness(2),
+                Padding = new Thickness(4, 6, 4, 6),
+                MinHeight = 54,
+                Background = count > 0 ? cellBg : Brushes.Transparent,
+                BorderBrush = isToday ? accent : gridBrush,
+                BorderThickness = new Thickness(isToday ? 1.5 : 1),
+                Child = cellContent,
+            };
+            Grid.SetRow(cell, cellIndex / 7);
+            Grid.SetColumn(cell, cellIndex % 7);
+            grid.Children.Add(cell);
+        }
+
+        panel.Children.Add(grid);
+        return panel;
+    }
+
+    private static Border BuildCalendarNavButton(string glyph, bool enabled, Brush textPrimary, Brush textSecondary)
+    {
+        return new Border
+        {
+            Width = 28,
+            Height = 28,
+            CornerRadius = new CornerRadius(6),
+            Background = Brushes.Transparent,
+            Cursor = enabled ? Cursors.Hand : Cursors.Arrow,
+            Child = new TextBlock
+            {
+                Text = glyph,
+                FontSize = 16,
+                FontWeight = FontWeights.Bold,
+                Foreground = enabled ? textPrimary : textSecondary,
+                Opacity = enabled ? 1.0 : 0.35,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+    }
+
+    /// <summary>Combined Claude Code + Codex prompt count per local calendar day, for days that fall within the given month.</summary>
+    private Dictionary<DateOnly, int> GetDailyPromptCounts(DateTimeOffset monthStart)
+    {
+        var monthEnd = monthStart.AddMonths(1);
+        var result = new Dictionary<DateOnly, int>();
+        foreach (var agent in DashboardAgents)
+        {
+            foreach (var at in _promptScanCache.Get(agent).Timestamps)
+            {
+                var local = at.ToLocalTime();
+                if (local < monthStart || local >= monthEnd) continue;
+                var day = DateOnly.FromDateTime(local.Date);
+                result[day] = result.GetValueOrDefault(day) + 1;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Earliest/latest prompt timestamp across both agents, for deciding whether month-navigation arrows have anywhere to go.</summary>
+    private (DateTimeOffset? Min, DateTimeOffset? Max) GetPromptDataBounds()
+    {
+        DateTimeOffset? min = null, max = null;
+        foreach (var agent in DashboardAgents)
+        {
+            foreach (var at in _promptScanCache.Get(agent).Timestamps)
+            {
+                var local = at.ToLocalTime();
+                if (min is null || local < min) min = local;
+                if (max is null || local > max) max = local;
+            }
+        }
+        return (min, max);
     }
 
     // Agents in a fixed order, matching the /proyectos sections — Claude
