@@ -679,8 +679,11 @@ public partial class StatsWindow : Window
             var rangeProjectCount = inRange.Select(t => t.ProjectPath).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             var rangeTaskCount = inRange.Count;
             var rangePromptCount = _promptCountStore.GetAgentTotalInRange(agent, since, until);
-            if (!(rangePromptCount == 0 && rangeProjectCount == 0 && rangeTaskCount == 0))
-                wrap.Children.Add(BuildDashboardCard(agent, rangeLabel, rangePromptCount, rangeProjectCount, rangeTaskCount, textPrimary, textSecondary, cardBackground));
+            // Always shown, even all-zero — a card that silently disappears
+            // instead of reading "0" is more confusing than reassuring: it
+            // leaves you wondering whether the agent just isn't tracked at
+            // all, rather than confirming it genuinely had no activity.
+            wrap.Children.Add(BuildDashboardCard(agent, rangeLabel, rangePromptCount, rangeProjectCount, rangeTaskCount, textPrimary, textSecondary, cardBackground));
         }
 
         foreach (var agent in DashboardAgents)
@@ -693,8 +696,7 @@ public partial class StatsWindow : Window
             // the all-time total (see PromptCountStore/GetPromptCountsByProject),
             // not a delta sum.
             var totalPromptCount = _promptCountStore.GetLatestTotalsByProject(agent).Values.Sum();
-            if (!(totalPromptCount == 0 && totalProjectCount == 0 && totalTaskCount == 0))
-                wrap.Children.Add(BuildDashboardCard(agent, totalsLabel, totalPromptCount, totalProjectCount, totalTaskCount, textPrimary, textSecondary, totalsCardBackground));
+            wrap.Children.Add(BuildDashboardCard(agent, totalsLabel, totalPromptCount, totalProjectCount, totalTaskCount, textPrimary, textSecondary, totalsCardBackground));
         }
 
         return wrap.Children.Count > 0 ? wrap : null;
