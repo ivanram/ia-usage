@@ -56,6 +56,31 @@ public sealed class PromptCountStore
         {
             using var conn = new SqliteConnection(_connectionString);
             conn.Open();
+
+            // Prompt counts are cumulative scans of append-only
+            // transcripts — a project's total can only ever grow. A
+            // transient read hiccup (a file briefly locked by
+            // antivirus/cloud-sync/the Windows Search indexer) can still
+            // make a single scan undercount a project despite the retries
+            // in ClaudeCodeProjectsHelper/CodexProjectsHelper; without this
+            // clamp that bad low reading gets stored as fact, and the next
+            // normal scan's real total then looks like a burst of
+            // brand-new prompts that were never typed. Clamping to the
+            // highest total ever recorded for that project makes a bad
+            // reading a no-op instead of corrupting the delta math
+            // everything downstream (dashboard cards, charts) relies on.
+            var previousMax = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            using (var maxCmd = conn.CreateCommand())
+            {
+                maxCmd.CommandText = "SELECT project, MAX(total_count) FROM prompt_counts WHERE agent = $a GROUP BY project";
+                maxCmd.Parameters.AddWithValue("$a", agent);
+                using var maxReader = maxCmd.ExecuteReader();
+                while (maxReader.Read())
+                {
+                    previousMax[maxReader.GetString(0)] = maxReader.GetInt32(1);
+                }
+            }
+
             using var tx = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
@@ -68,10 +93,11 @@ public sealed class PromptCountStore
             var timestamp = at.ToUniversalTime().ToString("O");
             foreach (var (project, count) in totalsByProject)
             {
+                var clamped = previousMax.TryGetValue(project, out var max) ? Math.Max(count, max) : count;
                 tParam.Value = timestamp;
                 aParam.Value = agent;
                 pParam.Value = project;
-                cParam.Value = count;
+                cParam.Value = clamped;
                 cmd.ExecuteNonQuery();
             }
             tx.Commit();
