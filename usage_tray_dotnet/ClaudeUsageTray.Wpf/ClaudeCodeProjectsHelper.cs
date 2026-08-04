@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 
 namespace ClaudeUsageTray;
 
@@ -136,21 +137,44 @@ internal static class ClaudeCodeProjectsHelper
         return result;
     }
 
+    /// <summary>
+    /// Retries a couple of times on an IOException before giving up — a
+    /// session file transiently locked by something else entirely (an
+    /// antivirus scan, OneDrive/cloud sync, the Windows Search indexer)
+    /// used to silently make this file contribute 0 prompts for that one
+    /// scan; the NEXT successful scan would then see its full count appear
+    /// out of nowhere and record it as a burst of brand-new prompts that
+    /// were never actually typed. See CodexProjectsHelper's identical fix
+    /// for the confirmed real-world repro.
+    /// </summary>
     private static int CountPromptsInFile(string sessionFile)
     {
-        var count = 0;
-        try
+        for (var attempt = 0; ; attempt++)
         {
-            using var reader = new StreamReader(sessionFile);
-            string? line;
-            while ((line = reader.ReadLine()) != null)
+            try
             {
-                if (!string.IsNullOrEmpty(line) && IsRealUserPrompt(line)) count++;
+                return CountPromptsInFileCore(sessionFile);
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                Thread.Sleep(50);
+            }
+            catch
+            {
+                // Malformed file, or still locked after retrying.
+                return 0;
             }
         }
-        catch
+    }
+
+    private static int CountPromptsInFileCore(string sessionFile)
+    {
+        var count = 0;
+        using var reader = new StreamReader(sessionFile);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
         {
-            // Locked file mid-write, etc. — count whatever was read before the failure.
+            if (!string.IsNullOrEmpty(line) && IsRealUserPrompt(line)) count++;
         }
         return count;
     }

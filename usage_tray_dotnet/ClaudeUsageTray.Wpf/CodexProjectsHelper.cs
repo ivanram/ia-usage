@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 
 namespace ClaudeUsageTray;
 
@@ -119,30 +120,55 @@ internal static class CodexProjectsHelper
         return result;
     }
 
-    /// <summary>One pass over the file covers both the session_meta line 0 (for cwd) and every line's prompt check, instead of opening the file twice.</summary>
+    /// <summary>
+    /// One pass over the file covers both the session_meta line 0 (for cwd)
+    /// and every line's prompt check, instead of opening the file twice.
+    /// Retries a couple of times on an IOException before giving up — a
+    /// rollout file transiently locked by something else entirely (an
+    /// antivirus scan, OneDrive/cloud sync, the Windows Search indexer)
+    /// used to silently make this file contribute 0 prompts for that one
+    /// scan; the NEXT successful scan would then see its full count appear
+    /// out of nowhere and record it as a burst of brand-new prompts that
+    /// were never actually typed (confirmed against a real history.db: one
+    /// project's total jumped by 10 between two samples with zero rollout
+    /// files touched on disk in between).
+    /// </summary>
     private static (string? Cwd, int PromptCount) ReadCwdAndCountPrompts(string path)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return ReadCwdAndCountPromptsCore(path);
+            }
+            catch (IOException) when (attempt < 2)
+            {
+                Thread.Sleep(50);
+            }
+            catch
+            {
+                // Malformed file, or still locked after retrying — return nothing gathered.
+                return (null, 0);
+            }
+        }
+    }
+
+    private static (string? Cwd, int PromptCount) ReadCwdAndCountPromptsCore(string path)
     {
         string? cwd = null;
         var count = 0;
-        try
+        using var reader = new StreamReader(path);
+        var isFirstLine = true;
+        string? line;
+        while ((line = reader.ReadLine()) != null)
         {
-            using var reader = new StreamReader(path);
-            var isFirstLine = true;
-            string? line;
-            while ((line = reader.ReadLine()) != null)
+            if (string.IsNullOrEmpty(line)) continue;
+            if (isFirstLine)
             {
-                if (string.IsNullOrEmpty(line)) continue;
-                if (isFirstLine)
-                {
-                    cwd = TryExtractSessionMetaCwd(line);
-                    isFirstLine = false;
-                }
-                if (IsRealUserPrompt(line)) count++;
+                cwd = TryExtractSessionMetaCwd(line);
+                isFirstLine = false;
             }
-        }
-        catch
-        {
-            // Locked/malformed file — return whatever was gathered before the failure.
+            if (IsRealUserPrompt(line)) count++;
         }
         return (cwd, count);
     }
