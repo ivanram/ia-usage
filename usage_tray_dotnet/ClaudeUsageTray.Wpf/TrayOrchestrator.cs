@@ -350,6 +350,7 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.FlatBarColorHex = _settings.AccentColor == AppSettings.OriginalAccentSentinel ? null : _settings.AccentColor;
         _popup.AnimationsEnabled = _settings.AnimationsEnabled;
         _trayMenu.ApplyTheme(new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark);
+        _statsWindow?.RefreshTheme();
     }
 
     private void ApplyTelegramSettings()
@@ -460,35 +461,42 @@ public sealed class TrayOrchestrator : IDisposable
     }
 
     /// <summary>
-    /// Snapshots each coding agent's current per-project prompt counts into
-    /// _promptCountStore (feeding the Stats window chart's trend line) and
-    /// refreshes _promptScanCache (feeding the dashboard cards and
-    /// /proyectos) — a full transcript scan, unlike the /proyectos task
-    /// list's own metadata reads which only touch a file's first line, so
-    /// this runs on its own 60-minute timer rather than alongside the usage
-    /// refresh, and — just as importantly — rather than on every Stats
-    /// window open or range-tab click, which used to redo this same scan
-    /// live and peg the CPU. The actual file I/O happens off the UI thread;
-    /// only the (cheap) store write and cache update happen synchronously.
+    /// Full-transcript scan feeding both _promptScanCache (dashboard cards,
+    /// calendar view, /proyectos) and _promptCountStore (the Stats window
+    /// chart's trend line), so this runs on its own 60-minute timer rather
+    /// than alongside the usage refresh, and — just as importantly — rather
+    /// than on every Stats window open or range-tab click, which used to
+    /// redo this same scan live and peg the CPU.
+    ///
+    /// The scan itself always runs, on every call including the one at
+    /// startup — _promptScanCache is memory-only, so it starts empty on
+    /// every launch and has nothing else to populate it from. Only the
+    /// _promptCountStore WRITE is still gated by ShouldSampleNow, to avoid
+    /// clustering near-duplicate history rows if the app gets closed and
+    /// reopened a few times in the same hour; skipping the scan entirely in
+    /// that case (like this used to) left the cache permanently empty until
+    /// the next real timer tick, up to 60 minutes later.
     /// </summary>
     private async Task SamplePromptCountsAsync()
     {
         try
         {
-            if (!_promptCountStore.ShouldSampleNow(MinPromptSampleInterval))
-            {
-                Log("SamplePromptCountsAsync: skipped, sampled recently");
-                return;
-            }
-
             var now = DateTimeOffset.UtcNow;
             var (claudeCodeScan, codexScan) = await Task.Run(() =>
                 (ClaudeCodeProjectsHelper.ScanPrompts(), CodexProjectsHelper.ScanPrompts()));
 
-            _promptCountStore.RecordSnapshot("Claude Code", claudeCodeScan.TotalsByProject, now);
-            _promptCountStore.RecordSnapshot("Codex", codexScan.TotalsByProject, now);
             _promptScanCache.Set("Claude Code", claudeCodeScan.TotalsByProject, claudeCodeScan.Timestamps);
             _promptScanCache.Set("Codex", codexScan.TotalsByProject, codexScan.Timestamps);
+            _statsWindow?.OnPromptScanRefreshed();
+
+            if (!_promptCountStore.ShouldSampleNow(MinPromptSampleInterval))
+            {
+                Log("SamplePromptCountsAsync: cache refreshed, DB snapshot skipped (sampled recently)");
+                return;
+            }
+
+            _promptCountStore.RecordSnapshot("Claude Code", claudeCodeScan.TotalsByProject, now);
+            _promptCountStore.RecordSnapshot("Codex", codexScan.TotalsByProject, now);
             Log($"SamplePromptCountsAsync: Claude Code {claudeCodeScan.TotalsByProject.Count} project(s), Codex {codexScan.TotalsByProject.Count} project(s)");
         }
         catch (Exception ex)

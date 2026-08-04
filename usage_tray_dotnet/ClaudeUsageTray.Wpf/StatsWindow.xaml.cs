@@ -345,7 +345,7 @@ public partial class StatsWindow : Window
     /// </summary>
     private FrameworkElement BuildCustomDateTab(Brush textSecondary, Brush accent)
     {
-        var isActive = _range == StatsRange.Custom;
+        var isActive = _range == StatsRange.Custom && !_showCalendar;
         var activeBg = accent.Clone();
         activeBg.Opacity = 0.14;
 
@@ -460,7 +460,7 @@ public partial class StatsWindow : Window
 
     private FrameworkElement BuildRangeTab(string text, StatsRange range, Brush textSecondary, Brush accent)
     {
-        var isActive = _range == range;
+        var isActive = _range == range && !_showCalendar;
         var activeBg = accent.Clone();
         activeBg.Opacity = 0.14;
 
@@ -530,6 +530,15 @@ public partial class StatsWindow : Window
             Render();
         };
         return border;
+    }
+
+    /// <summary>Called by TrayOrchestrator right after it applies a new theme/accent, so an already-open Stats window doesn't keep showing stale colors until the user happens to click something that triggers a Render().</summary>
+    public void RefreshTheme() => Render();
+
+    /// <summary>Called by TrayOrchestrator once the periodic transcript scan refreshes _promptScanCache, so an open calendar view picks up newly-scanned days without needing a click.</summary>
+    public void OnPromptScanRefreshed()
+    {
+        if (_showCalendar) Render();
     }
 
     /// <summary>
@@ -758,7 +767,8 @@ public partial class StatsWindow : Window
         }
         panel.Children.Add(weekdayRow);
 
-        var dailyCounts = GetDailyPromptCounts(_calendarMonth);
+        var dailyCountsByAgent = GetDailyPromptCountsByAgent(_calendarMonth);
+        var dailyCounts = dailyCountsByAgent.ToDictionary(kv => kv.Key, kv => kv.Value.Values.Sum());
         var maxCount = dailyCounts.Count > 0 ? dailyCounts.Values.Max() : 0;
 
         var daysInMonth = DateTime.DaysInMonth(_calendarMonth.Year, _calendarMonth.Month);
@@ -820,6 +830,11 @@ public partial class StatsWindow : Window
                 BorderThickness = new Thickness(isToday ? 1.5 : 1),
                 Child = cellContent,
             };
+            if (count > 0 && dailyCountsByAgent.TryGetValue(date, out var byAgent))
+            {
+                cell.ToolTip = string.Join("\n", DashboardAgents
+                    .Select(agent => $"{AgentDisplayNames.For(agent)}: {Strings.F("stats.dashboard.prompts", byAgent.GetValueOrDefault(agent))}"));
+            }
             Grid.SetRow(cell, cellIndex / 7);
             Grid.SetColumn(cell, cellIndex % 7);
             grid.Children.Add(cell);
@@ -851,11 +866,11 @@ public partial class StatsWindow : Window
         };
     }
 
-    /// <summary>Combined Claude Code + Codex prompt count per local calendar day, for days that fall within the given month.</summary>
-    private Dictionary<DateOnly, int> GetDailyPromptCounts(DateTimeOffset monthStart)
+    /// <summary>Prompt count per local calendar day, broken down by agent, for days that fall within the given month — the combined total is just the per-agent values summed.</summary>
+    private Dictionary<DateOnly, Dictionary<string, int>> GetDailyPromptCountsByAgent(DateTimeOffset monthStart)
     {
         var monthEnd = monthStart.AddMonths(1);
-        var result = new Dictionary<DateOnly, int>();
+        var result = new Dictionary<DateOnly, Dictionary<string, int>>();
         foreach (var agent in DashboardAgents)
         {
             foreach (var at in _promptScanCache.Get(agent).Timestamps)
@@ -863,7 +878,12 @@ public partial class StatsWindow : Window
                 var local = at.ToLocalTime();
                 if (local < monthStart || local >= monthEnd) continue;
                 var day = DateOnly.FromDateTime(local.Date);
-                result[day] = result.GetValueOrDefault(day) + 1;
+                if (!result.TryGetValue(day, out var byAgent))
+                {
+                    byAgent = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    result[day] = byAgent;
+                }
+                byAgent[agent] = byAgent.GetValueOrDefault(agent) + 1;
             }
         }
         return result;
