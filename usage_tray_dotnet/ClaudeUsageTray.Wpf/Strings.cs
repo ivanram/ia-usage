@@ -61,6 +61,11 @@ internal static class Strings
         ["theme.light"] = "Claro",
         ["theme.dark"] = "Oscuro",
         ["appearance.accent.hint"] = "Color de acento — \"Original\" colorea las barras del panel según el % de uso",
+        ["appearance.windowstyle.hint"] = "Estilo de la ventana del panel (experimental)",
+        ["appearance.windowstyle.standard"] = "Ventana estándar",
+        ["appearance.windowstyle.blur"] = "Ventana con blur",
+        ["appearance.opacity.label"] = "Opacidad de la ventana",
+        ["appearance.blur.label"] = "Transparencia del cristal",
 
         ["service.loggedin"] = "Sesión iniciada",
         ["service.link"] = "Vincular cuenta",
@@ -212,6 +217,11 @@ internal static class Strings
         ["theme.light"] = "Light",
         ["theme.dark"] = "Dark",
         ["appearance.accent.hint"] = "Accent color — \"Original\" colors the panel bars based on usage %",
+        ["appearance.windowstyle.hint"] = "Panel window style (experimental)",
+        ["appearance.windowstyle.standard"] = "Standard window",
+        ["appearance.windowstyle.blur"] = "Blur window",
+        ["appearance.opacity.label"] = "Window opacity",
+        ["appearance.blur.label"] = "Glass transparency",
 
         ["service.loggedin"] = "Signed in",
         ["service.link"] = "Link account",

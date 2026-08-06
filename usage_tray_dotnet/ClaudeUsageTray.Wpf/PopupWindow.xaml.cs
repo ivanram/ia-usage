@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using MaterialDesignThemes.Wpf;
@@ -20,6 +21,7 @@ public partial class PopupWindow : Window
     public event EventHandler? RefreshRequested;
     public event EventHandler? SettingsRequested;
     public event EventHandler? StatsRequested;
+    public event EventHandler? CloseRequested;
 
     private readonly List<(Border Fill, double TargetWidth)> _animatedBars = new();
     /// <summary>
@@ -52,6 +54,9 @@ public partial class PopupWindow : Window
     /// <summary>Null = the default percent-based green/amber/red bars. A hex string = every bar uses that one flat color regardless of percent.</summary>
     public string? FlatBarColorHex { get; set; }
     public bool AnimationsEnabled { get; set; } = true;
+    public PopupWindowStyle StyleMode { get; set; } = PopupWindowStyle.Standard;
+    public int OpacityPercent { get; set; } = 100;
+    public int BlurPercent { get; set; } = 45;
 
     // The lowest the window's BOTTOM edge is ever allowed to sit — set once
     // when the panel first appears (Top + Height at that moment). As more
@@ -64,9 +69,19 @@ public partial class PopupWindow : Window
     // higher than the actual content growth warranted.
     private double _maxBottom;
 
+    // Captured once so Blur mode can strip the shadow (see ApplyThemeColors)
+    // and Standard mode can put the exact same instance back, rather than
+    // reconstructing a DropShadowEffect with hand-copied parameters.
+    private readonly Effect? _standardShadowEffect;
+
+    // Set on every Render() so the NEXT one can tell whether StyleMode
+    // itself just changed — see Render()'s styleChanged branch.
+    private PopupWindowStyle? _lastRenderedStyleMode;
+
     public PopupWindow()
     {
         InitializeComponent();
+        _standardShadowEffect = RootBorder.Effect;
     }
 
     /// <summary>
@@ -96,6 +111,19 @@ public partial class PopupWindow : Window
 
     public void Render(IEnumerable<UsageSnapshot> snapshots, bool hasAnyEnabled, DateTime? lastUpdated, int totalEnabled = 0)
     {
+        // Standard vs Blur changes the window's real layout size by a hard
+        // 36px in each dimension (the shadow margin appearing/disappearing
+        // — see ApplyThemeColors) the instant this method's ApplyThemeColors
+        // call below runs. That's a fundamentally different kind of size
+        // change from AnimateToNewSize's actual purpose (content growing
+        // as more services' data streams in) — animating THIS one left the
+        // window ~220ms into every mode switch with the new margin/shadow/
+        // DWM-blur state already applied but the old Width/Height/Top not
+        // yet caught up, which is what read as a doubled-up border or a
+        // corner getting cut off mid-resize. See ResizeInstant.
+        var styleChanged = _lastRenderedStyleMode is { } lastStyle && lastStyle != StyleMode;
+        _lastRenderedStyleMode = StyleMode;
+
         ApplyThemeColors();
 
         ContentHost.Children.Clear();
@@ -155,7 +183,11 @@ public partial class PopupWindow : Window
         // data landing) can change its height. Resize/reposition smoothly
         // instead of letting SizeToContent silently grow the window
         // downward off-screen — see ShowNearCursor and AnimateToNewSize.
-        if (IsVisible) AnimateToNewSize();
+        if (IsVisible)
+        {
+            if (styleChanged) ResizeInstant();
+            else AnimateToNewSize();
+        }
     }
 
     /// <summary>Swaps the refresh icon for a spinning one and disables the button while a fetch is in flight.</summary>
@@ -188,20 +220,82 @@ public partial class PopupWindow : Window
     {
         var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
 
-        RootBorder.Background = isDark
-            ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
-            : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));
+        var baseColor = isDark ? Color.FromRgb(0x2B, 0x2B, 0x2E) : Color.FromRgb(0xFA, 0xFA, 0xFA);
+        var hwnd = new WindowInteropHelper(this).Handle;
+
+        if (StyleMode == PopupWindowStyle.Blur)
+        {
+            // Windows doesn't expose a variable blur radius — the OS-driven
+            // blur itself is always the same strength once acrylic is on,
+            // so this slider is really a transparency dial for the tint
+            // sitting on top of it (see Strings["appearance.blur.label"]).
+            // Floor kept above 0 (unlike Standard mode's opacity, which can
+            // go there) since the legacy accent-blur API still bakes in its
+            // own base tint/noise even at low alpha — but pushed low enough
+            // that 100% actually reads as see-through, not just "less
+            // opaque"; the text-legibility side of this is now covered
+            // separately by the pure-white/black text below, not by this
+            // floor.
+            var tintAlpha = (byte)Math.Clamp(235 - BlurPercent / 100.0 * 185, 50, 235);
+            RootBorder.Background = new SolidColorBrush(Color.FromArgb(tintAlpha, baseColor.R, baseColor.G, baseColor.B));
+
+            // The composition blur applies to the whole HWND rectangle, not
+            // just the pixels WPF actually paints — with the 18px shadow
+            // margin left in place, that outer ring is blurred-but-untinted
+            // (nothing there to tint) and reads as a hard rectangular seam
+            // right where the drop shadow's blur radius used to fade out
+            // invisibly. Dropping the margin and the shadow itself so the
+            // window's real bounds match the rounded card exactly removes
+            // that seam; the OS-level rounded corners take over for the
+            // rounding the shadow's breathing room used to protect.
+            RootGrid.Margin = new Thickness(0);
+            RootBorder.Effect = null;
+            if (hwnd != IntPtr.Zero) DwmHelper.SetAcrylicBlur(hwnd, baseColor, tintAlpha);
+        }
+        else
+        {
+            var alpha = (byte)Math.Clamp(Math.Round(OpacityPercent / 100.0 * 255), 0, 255);
+            RootBorder.Background = new SolidColorBrush(Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B));
+            RootGrid.Margin = new Thickness(18);
+            RootBorder.Effect = _standardShadowEffect;
+            if (hwnd != IntPtr.Zero) DwmHelper.DisableBlur(hwnd);
+        }
+
+        // DWM rounds the corners of the window's real (HWND) bounds, not
+        // whatever WPF happens to be painting inside it. In Blur mode those
+        // two coincide (margin is 0 above), so rounding helps. In Standard
+        // mode the real bounds are 18px bigger on every side — mostly-
+        // invisible padding for the drop shadow — and rounding THAT rect
+        // showed up as a faint rectangular halo/box around the actual
+        // white card. Worse, the preference sticks to the HWND across
+        // resizes, so this window (reused between both modes) needs the
+        // "don't round" side stated explicitly too, not just skipped —
+        // otherwise a Blur-mode session earlier in the same run leaves
+        // rounding turned on for every Standard-mode open after it.
+        if (hwnd != IntPtr.Zero)
+        {
+            if (StyleMode == PopupWindowStyle.Blur) DwmHelper.EnableRoundedCorners(hwnd);
+            else DwmHelper.DisableRoundedCorners(hwnd);
+        }
+
+        // Blur mode sits over arbitrary, unpredictable desktop content (dark
+        // photos, busy video) instead of a flat theme-colored fill, so the
+        // usual near-white/near-gray pairing loses too much contrast there —
+        // pushed to pure white/black for every piece of text, not just the
+        // primary line. Standard mode keeps the original softer pairing.
+        var blurMode = StyleMode == PopupWindowStyle.Blur;
 
         _textPrimary = isDark
-            ? new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2))
-            : new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A));
+            ? new SolidColorBrush(blurMode ? Colors.White : Color.FromRgb(0xF2, 0xF2, 0xF2))
+            : new SolidColorBrush(blurMode ? Colors.Black : Color.FromRgb(0x1A, 0x1A, 0x1A));
 
         _textSecondary = isDark
-            ? new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xB8))
-            : new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
+            ? new SolidColorBrush(blurMode ? Colors.White : Color.FromRgb(0xB8, 0xB8, 0xB8))
+            : new SolidColorBrush(blurMode ? Colors.Black : Color.FromRgb(0x55, 0x55, 0x55));
 
         UpdatePinGlyphColor();
         UpdateStatsGlyphColor();
+        UpdateCloseGlyphColor();
     }
 
     private void UpdatePinGlyphColor()
@@ -213,6 +307,13 @@ public partial class PopupWindow : Window
         if (PinButton.Template.FindName("Glyph", PinButton) is not TextBlock glyph) return;
         glyph.Foreground = PinButton.IsChecked == true ? _textPrimary : _textSecondary;
         glyph.Opacity = PinButton.IsChecked == true ? 1.0 : 0.45;
+    }
+
+    private void UpdateCloseGlyphColor()
+    {
+        CloseButton.ApplyTemplate();
+        if (CloseButton.Template.FindName("CloseGlyph", CloseButton) is not TextBlock glyph) return;
+        glyph.Foreground = _textSecondary;
     }
 
     private void UpdateStatsGlyphColor()
@@ -230,9 +331,18 @@ public partial class PopupWindow : Window
     /// <summary>Opening Stats pins the main panel too, so both stay up together — the user can still unpin by hand if they don't want that.</summary>
     public void SetPinned(bool pinned) => PinButton.IsChecked = pinned;
 
-    private void OnPinToggled(object sender, RoutedEventArgs e) => UpdatePinGlyphColor();
+    private void OnPinToggled(object sender, RoutedEventArgs e)
+    {
+        UpdatePinGlyphColor();
+        // The close button only makes sense once the panel won't just
+        // auto-hide on its own — keep it out of the way (but still holding
+        // its layout slot, see PopupWindow.xaml) the rest of the time.
+        CloseButton.Visibility = PinButton.IsChecked == true ? Visibility.Visible : Visibility.Hidden;
+    }
 
     private void OnStatsClick(object sender, RoutedEventArgs e) => StatsRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnCloseClick(object sender, RoutedEventArgs e) => CloseRequested?.Invoke(this, EventArgs.Empty);
 
     /// <summary>
     /// WindowStyle="None" means there's no native title bar to drag by, so
@@ -243,6 +353,12 @@ public partial class PopupWindow : Window
     private void OnRootMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ButtonState != MouseButtonState.Pressed) return;
+
+        // Deliberately repositioning the panel is the same "keep this
+        // open" signal as clicking Pin by hand — without this it could
+        // vanish mid-drag, or the instant the cursor left it right after.
+        PinButton.IsChecked = true;
+
         try
         {
             DragMove();
@@ -585,14 +701,31 @@ public partial class PopupWindow : Window
         // TrayOrchestrator's poll loop), so it never disturbs an
         // already-open pinned panel.
         PinButton.IsChecked = false;
+        PositionNearCursor();
+        Show();
+        Activate();
+        ReapplyDwmStateAfterShow();
+        ReclampToScreen();
+    }
 
+    /// <summary>
+    /// Sizes and positions the window against the cursor without showing
+    /// it — split out of ShowNearCursor so PreviewStyleAsync can do this
+    /// same measure-and-place step while the window is still deliberately
+    /// hidden (see that method for why).
+    /// </summary>
+    private void PositionNearCursor()
+    {
         // Measure against the real content (not ActualWidth/Height, which
         // are stale/zero the first time — before the window has ever been
         // shown, SizeToContent hasn't resolved a real size yet). Using
         // ActualHeight here was why the very first popup could render
         // mostly below the screen edge, with only its top sliver visible.
-        Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var desired = DesiredSize;
+        // Goes through the same MeasureRealDesiredSize used by resizes —
+        // see its comment — so a mode switch never produces a different
+        // real window size for the same content depending on which path
+        // (first open vs. resize) happened to trigger it.
+        var desired = MeasureRealDesiredSize() ?? new Size(320, 160);
 
         var cursor = NativeScreenHelper.GetCursorPosition();
         var screen = NativeScreenHelper.GetWorkAreaForPoint(cursor);
@@ -626,20 +759,178 @@ public partial class PopupWindow : Window
         // allowed to reach — later content growth (more services' data
         // streaming in) only ever pushes the top edge up from here.
         _maxBottom = Top + Height;
+    }
 
-        Show();
-        Activate();
+    /// <summary>
+    /// Belt-and-suspenders: clamp again against the real rendered size once
+    /// the window is actually showing, in case real layout (fonts, DPI
+    /// rounding) differs slightly from the pre-show measure pass. Shared by
+    /// every Show path so the window can never end up partly off-screen.
+    /// </summary>
+    private void ReclampToScreen()
+    {
+        if (!(ActualWidth > 0 && ActualHeight > 0)) return;
+        var (screenLeftDip, screenRightDip, screenTopDip, screenBottomDip) = GetScreenBoundsDip();
+        Left = Math.Max(screenLeftDip + 8, Math.Min(Left, screenRightDip - ActualWidth - 8));
+        Top = Math.Max(screenTopDip + 8, Math.Min(Top, screenBottomDip - ActualHeight - 8));
+        _maxBottom = Top + ActualHeight;
+    }
 
-        // Belt-and-suspenders: clamp again against the real rendered size,
-        // in case actual layout (fonts, DPI rounding) differs slightly from
-        // the pre-show measure pass. This guarantees the window can never
-        // end up partly off-screen.
-        if (ActualWidth > 0 && ActualHeight > 0)
+    /// <summary>
+    /// Re-issues the DWM/composition half of ApplyThemeColors right after
+    /// Show(), once the window is definitely on screen. Belt-and-suspenders
+    /// alongside PreviewStyleAsync's hide-while-settling approach (see that
+    /// method) rather than the actual fix for the fade-in itself — but
+    /// cheap and idempotent, so there's no reason not to keep it too.
+    /// </summary>
+    private void ReapplyDwmStateAfterShow()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+
+        if (StyleMode == PopupWindowStyle.Blur)
         {
-            Left = Math.Max(screenLeftDip + 8, Math.Min(Left, screenRightDip - ActualWidth - 8));
-            Top = Math.Max(screenTopDip + 8, Math.Min(Top, screenBottomDip - ActualHeight - 8));
-            _maxBottom = Top + ActualHeight;
+            var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+            var baseColor = isDark ? Color.FromRgb(0x2B, 0x2B, 0x2E) : Color.FromRgb(0xFA, 0xFA, 0xFA);
+            var tintAlpha = (byte)Math.Clamp(235 - BlurPercent / 100.0 * 185, 50, 235);
+            DwmHelper.SetAcrylicBlur(hwnd, baseColor, tintAlpha);
+            DwmHelper.EnableRoundedCorners(hwnd);
         }
+        else
+        {
+            DwmHelper.DisableBlur(hwnd);
+            DwmHelper.DisableRoundedCorners(hwnd);
+        }
+    }
+
+    /// <summary>
+    /// Same first-open sizing dance as ShowNearCursor, but anchored to a
+    /// given window's bounds instead of the cursor — used by Settings'
+    /// Apariencia live preview, where anchoring to the cursor would often
+    /// plant the preview panel right on top of (or straddling) the Settings
+    /// dialog itself, since the cursor is wherever the user is still
+    /// dragging a slider inside it. Prefers opening to the right of the
+    /// given window, then the left, and only falls back to an on-screen
+    /// clamp (which may overlap) if neither side has room. Doesn't call
+    /// Activate() — unlike ShowNearCursor's primary open path, this one has
+    /// a modal dialog that should keep keyboard focus throughout.
+    /// </summary>
+    public void ShowBesideWindow(double ownerLeft, double ownerTop, double ownerWidth, double ownerHeight)
+    {
+        PinButton.IsChecked = false;
+        PositionBesideWindow(ownerLeft, ownerTop, ownerWidth, ownerHeight);
+        Show();
+        ReapplyDwmStateAfterShow();
+        ReclampToScreen();
+    }
+
+    /// <summary>Sizes and positions beside the given window without showing it — see PositionNearCursor for why that split exists.</summary>
+    private void PositionBesideWindow(double ownerLeft, double ownerTop, double ownerWidth, double ownerHeight)
+    {
+        var desired = MeasureRealDesiredSize() ?? new Size(320, 160);
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var ownerCenter = new NativeScreenHelper.POINT
+        {
+            X = (int)((ownerLeft + ownerWidth / 2) * dpi.DpiScaleX),
+            Y = (int)((ownerTop + ownerHeight / 2) * dpi.DpiScaleY),
+        };
+        var screen = NativeScreenHelper.GetWorkAreaForPoint(ownerCenter);
+
+        var widthDip = desired.Width;
+        var heightDip = desired.Height;
+        var screenRightDip = screen.Right / dpi.DpiScaleX;
+        var screenLeftDip = screen.Left / dpi.DpiScaleX;
+        var screenTopDip = screen.Top / dpi.DpiScaleY;
+        var screenBottomDip = screen.Bottom / dpi.DpiScaleY;
+
+        double left;
+        if (ownerLeft + ownerWidth + 16 + widthDip <= screenRightDip)
+            left = ownerLeft + ownerWidth + 16; // to the right of the owner window
+        else if (ownerLeft - 16 - widthDip >= screenLeftDip)
+            left = ownerLeft - 16 - widthDip; // no room on the right — try the left
+        else
+            left = Math.Max(screenLeftDip + 8, screenRightDip - widthDip - 8); // neither side fits — clamp on-screen as a last resort
+
+        var top = Math.Max(screenTopDip + 8, Math.Min(ownerTop, screenBottomDip - heightDip - 8));
+
+        BeginAnimation(WidthProperty, null);
+        BeginAnimation(HeightProperty, null);
+        BeginAnimation(TopProperty, null);
+
+        Width = widthDip;
+        Height = heightDip;
+        Left = left;
+        Top = top;
+        _maxBottom = Top + Height;
+    }
+
+    // DWM's acrylic blur-behind (SetAcrylicBlur/DisableBlur, the toggle
+    // between them) isn't an instant paint — enabling or disabling it is
+    // the compositor's own fade transition, running on DWM's own clock
+    // regardless of how fast this process re-issues the API call. Showing
+    // the panel right after flipping StyleMode meant the user watched that
+    // fade happen live on screen: the old margin/shadow/corners for a
+    // moment, then the blur visibly fading in (or out) over roughly this
+    // long before settling — which is exactly what read as "it resizes/
+    // redraws itself weirdly a second later." See PreviewStyleAsync.
+    private static readonly TimeSpan StyleSettleDelay = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>
+    /// The only entry point Settings' Apariencia live preview should use
+    /// for a style/opacity/blur/accent change — NOT the plain
+    /// StyleMode-then-Render()-then-Show combination the rest of the app
+    /// uses, because a StyleMode change specifically toggles DWM's
+    /// undocumented acrylic blur-behind on or off, and that has its own
+    /// fade transition (see StyleSettleDelay). Hiding the panel first (if
+    /// it was already up), applying the change and repositioning while
+    /// still hidden, and only revealing it once the transition has had
+    /// time to finish means the user only ever sees the final, correct
+    /// frame — never the transition itself. Opacity/blur-percent-only
+    /// tweaks (StyleMode unchanged) skip all of that and just update in
+    /// place instantly, same as before.
+    /// </summary>
+    public async Task PreviewStyleAsync(
+        PopupWindowStyle style, int opacityPercent, int blurPercent, string? flatBarColorHex,
+        IEnumerable<UsageSnapshot> snapshots, bool hasAnyEnabled, DateTime? lastUpdated, int totalEnabled,
+        double? besideLeft, double? besideTop, double? besideWidth, double? besideHeight)
+    {
+        var wasVisible = IsVisible;
+        var styleIsChanging = StyleMode != style;
+        if (wasVisible && styleIsChanging) Hide();
+
+        StyleMode = style;
+        OpacityPercent = opacityPercent;
+        BlurPercent = blurPercent;
+        FlatBarColorHex = flatBarColorHex;
+        Render(snapshots, hasAnyEnabled, lastUpdated, totalEnabled);
+
+        if (wasVisible)
+        {
+            // Render() already resized/repositioned in place above when the
+            // style DIDN'T change (its own ordinary AnimateToNewSize path,
+            // since IsVisible was never touched); when it DID change, that
+            // branch was skipped because Hide() just ran, so redo it here
+            // now that the new margin/content is in place.
+            if (styleIsChanging) ResizeInstant();
+        }
+        else if (besideLeft is { } left && besideTop is { } top && besideWidth is { } width && besideHeight is { } height)
+        {
+            PositionBesideWindow(left, top, width, height);
+        }
+        else
+        {
+            PositionNearCursor();
+        }
+
+        if (styleIsChanging) await Task.Delay(StyleSettleDelay);
+
+        if (!IsVisible)
+        {
+            Show();
+            ReapplyDwmStateAfterShow();
+        }
+        SetPinned(true);
     }
 
     /// <summary>
@@ -651,28 +942,125 @@ public partial class PopupWindow : Window
     /// </summary>
     private void AnimateToNewSize()
     {
-        // Measure() on a Window that's already shown and already has a
-        // resolved layout can return a stale/degenerate DesiredSize (this
-        // produced an ~2x2 result once, which then made the away-hover
-        // hit-test think the whole panel was a single pixel and closed it
-        // on the very next poll). InvalidateMeasure() first forces WPF to
-        // actually recompute against the real current content instead of
-        // handing back a cached answer.
-        var content = (FrameworkElement)Content;
-        content.InvalidateMeasure();
-        Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var desired = DesiredSize;
+        var desired = MeasureRealDesiredSize();
+        if (desired is not { } size) return;
 
-        // Defensive floor: never animate to an obviously-wrong tiny size.
-        if (desired.Width < 100 || desired.Height < 50) return;
+        var (_, _, screenTopDip, screenBottomDip) = GetScreenBoundsDip();
 
-        var newTop = Math.Min(Top, _maxBottom - desired.Height);
+        // _maxBottom alone assumes the panel's on-screen position was
+        // already valid — true for ordinary content growth (a provider's
+        // data landing), but not guaranteed in general, so the target is
+        // re-clamped against the real screen bounds too rather than
+        // trusting that anchor blindly.
+        var newTop = Math.Min(Top, _maxBottom - size.Height);
+        newTop = Math.Max(screenTopDip + 8, Math.Min(newTop, screenBottomDip - size.Height - 8));
 
         var duration = TimeSpan.FromMilliseconds(220);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        BeginAnimation(WidthProperty, new DoubleAnimation { To = desired.Width, Duration = duration, EasingFunction = ease });
-        BeginAnimation(HeightProperty, new DoubleAnimation { To = desired.Height, Duration = duration, EasingFunction = ease });
+        BeginAnimation(WidthProperty, new DoubleAnimation { To = size.Width, Duration = duration, EasingFunction = ease });
+        BeginAnimation(HeightProperty, new DoubleAnimation { To = size.Height, Duration = duration, EasingFunction = ease });
         BeginAnimation(TopProperty, new DoubleAnimation { To = newTop, Duration = duration, EasingFunction = ease });
+    }
+
+    /// <summary>
+    /// Style changes (Standard vs Blur) alter the window's real layout size
+    /// by a hard 36px in each dimension the instant ApplyThemeColors runs —
+    /// see Render()'s styleChanged branch for why animating that jump (as
+    /// AnimateToNewSize does for ordinary content growth) isn't right here:
+    /// it left the window mid-resize with the new margin/shadow/DWM-blur
+    /// state already applied but the old bounds not yet caught up, which is
+    /// what read as a doubled border or a corner getting cut off. Jumping
+    /// straight to the correct, screen-clamped bounds in one frame — same
+    /// math as AnimateToNewSize, just applied instantly instead of eased —
+    /// keeps every visual (margin, shadow, DWM state, window bounds) in
+    /// sync on every frame instead of tearing for ~220ms.
+    /// </summary>
+    private void ResizeInstant()
+    {
+        BeginAnimation(WidthProperty, null);
+        BeginAnimation(HeightProperty, null);
+        BeginAnimation(TopProperty, null);
+
+        var desired = MeasureRealDesiredSize();
+        if (desired is not { } size) return;
+
+        var (screenLeftDip, screenRightDip, screenTopDip, screenBottomDip) = GetScreenBoundsDip();
+
+        var newTop = Math.Min(Top, _maxBottom - size.Height);
+        newTop = Math.Max(screenTopDip + 8, Math.Min(newTop, screenBottomDip - size.Height - 8));
+        var newLeft = Math.Max(screenLeftDip + 8, Math.Min(Left, screenRightDip - size.Width - 8));
+
+        Width = size.Width;
+        Height = size.Height;
+        Top = newTop;
+        Left = newLeft;
+        _maxBottom = Top + Height;
+    }
+
+    /// <summary>
+    /// Constant chrome reserve (DIPs, one side) added around the card's
+    /// natural content size to get the window's real (HWND) size — see
+    /// MeasureRealDesiredSize for why this has to be a fixed number rather
+    /// than whatever RootGrid's current Margin happens to be.
+    /// </summary>
+    private const double ChromeReserve = 18;
+
+    /// <summary>
+    /// Measuring the WINDOW itself (as this used to do) bakes in whatever
+    /// RootGrid.Margin ApplyThemeColors currently has set — 18px in
+    /// Standard mode (room for the drop shadow to fade out) but 0 in Blur
+    /// mode (so the acrylic tint covers the whole HWND with no untinted
+    /// seam — see ApplyThemeColors). That meant the window's real size for
+    /// otherwise-identical content differed by a hard 36px between modes,
+    /// and every resize/reposition path anchored on the window's raw
+    /// Left/Top corner, not the visible card — so switching modes visibly
+    /// shifted and resized the card, not just restyled it, which is what
+    /// kept reading as a broken resize no matter how the DWM-transition
+    /// timing was tuned.
+    ///
+    /// Measuring RootBorder directly instead — the actual card, before any
+    /// outer chrome margin — and always adding the same ChromeReserve on
+    /// top regardless of mode makes the window's real size identical for
+    /// identical content in both modes. RootGrid's Margin toggle (still 18
+    /// vs 0, unchanged) then does the rest for free through ordinary
+    /// Stretch-arrange: in Standard mode RootBorder is arranged at exactly
+    /// its natural size, inset by the reserve, same as before; in Blur mode
+    /// RootBorder stretches to fill the now-uniformly-sized window
+    /// edge-to-edge as before, just centered around its natural content
+    /// (see the inner Grid's Center alignment in PopupWindow.xaml) instead
+    /// of pinned to the top-left, so the extra room reads as an even ring
+    /// instead of dead space at the bottom.
+    ///
+    /// InvalidateMeasure() first forces WPF to actually recompute against
+    /// the real current content instead of handing back a stale/degenerate
+    /// cached DesiredSize (this produced an ~2x2 result once, which then
+    /// made the away-hover hit-test think the whole panel was a single
+    /// pixel and closed it on the very next poll). Returns null for an
+    /// obviously-wrong tiny result instead of a size neither caller should
+    /// ever apply.
+    /// </summary>
+    private Size? MeasureRealDesiredSize()
+    {
+        RootGrid.InvalidateMeasure();
+        RootBorder.InvalidateMeasure();
+        RootBorder.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var desired = RootBorder.DesiredSize;
+        return desired.Width < 100 || desired.Height < 50
+            ? null
+            : new Size(desired.Width + ChromeReserve * 2, desired.Height + ChromeReserve * 2);
+    }
+
+    /// <summary>Work area of the monitor the window is currently on, in DIPs — shared by every resize/reposition path.</summary>
+    private (double Left, double Right, double Top, double Bottom) GetScreenBoundsDip()
+    {
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var anchor = new NativeScreenHelper.POINT
+        {
+            X = (int)((Left + Width / 2) * dpi.DpiScaleX),
+            Y = (int)((Top + Height / 2) * dpi.DpiScaleY),
+        };
+        var screen = NativeScreenHelper.GetWorkAreaForPoint(anchor);
+        return (screen.Left / dpi.DpiScaleX, screen.Right / dpi.DpiScaleX, screen.Top / dpi.DpiScaleY, screen.Bottom / dpi.DpiScaleY);
     }
 
     private void PlayBarAnimations()

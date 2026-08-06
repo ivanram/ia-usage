@@ -18,12 +18,24 @@
     right past the rounded corners, which is exactly what read as "square
     corners still visible" on a window that's supposedly rounded.
     -->
-    <Grid Margin="18">
+    <Grid x:Name="RootGrid" Margin="18">
         <Border x:Name="RootBorder" CornerRadius="16" MouseLeftButtonDown="OnRootMouseLeftButtonDown">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black" />
             </Border.Effect>
-            <Grid>
+            <!--
+            Centered rather than the default Stretch: RootBorder itself is
+            sized to the window's real (HWND) bounds, which in Blur mode is
+            deliberately bigger than this content's natural size (see
+            PopupWindow.ChromeReserve in the code-behind) so the acrylic
+            tint/rounding covers the whole HWND without a gap. Centering
+            this inner Grid keeps the actual content pinned at its natural
+            size and lets that extra room appear as an even ring on all
+            four sides instead of all piling up at the bottom (a StackPanel
+            given more height than it needs only ever leaves the surplus
+            below its last child, never distributes it).
+            -->
+            <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
                 <StackPanel x:Name="ContentHost" Margin="20" />
 
                 <!--
@@ -53,6 +65,32 @@
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="StatsBg" Property="Background" Value="#14808080" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <!--
+                Only meaningful while pinned (an unpinned panel already
+                closes itself the moment the cursor leaves), so it's hidden
+                the rest of the time — Visibility="Hidden", not Collapsed,
+                so it keeps its fixed margin slot and neither sibling button
+                ever shifts position when it appears/disappears.
+                -->
+                <Button x:Name="CloseButton" Width="26" Height="26"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,8,72,0" Cursor="Hand" Visibility="Hidden"
+                        Click="OnCloseClick" ToolTip="Cerrar panel">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="CloseBg" CornerRadius="13" Background="Transparent">
+                                <TextBlock x:Name="CloseGlyph" Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="CloseBg" Property="Background" Value="#14808080" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>

@@ -16,6 +16,12 @@ public enum AppTheme
     Dark,
 }
 
+public enum PopupWindowStyle
+{
+    Standard,
+    Blur,
+}
+
 public sealed class AppSettings
 {
     public int RefreshMinutes { get; set; } = 10;
@@ -29,6 +35,11 @@ public sealed class AppSettings
     /// <summary>Either <see cref="OriginalAccentSentinel"/> (percent-based bar colors) or a literal "#RRGGBB".</summary>
     public string AccentColor { get; set; } = OriginalAccentSentinel;
     public bool AnimationsEnabled { get; set; } = true;
+    public PopupWindowStyle PopupWindowStyleMode { get; set; } = PopupWindowStyle.Standard;
+    /// <summary>1-100. Standard mode only: alpha of the popup's background fill — the text/bars on top stay fully opaque regardless.</summary>
+    public int PopupOpacityPercent { get; set; } = 100;
+    /// <summary>1-100. Blur mode only: how strong the frosted-glass effect looks — see PopupWindow.ApplyThemeColors for why this drives a tint alpha rather than an actual blur radius (Windows doesn't expose one).</summary>
+    public int PopupBlurPercent { get; set; } = 45;
     public bool TelegramEnabled { get; set; } = true;
     public string? TelegramBotToken { get; set; }
     public long? TelegramChatId { get; set; }

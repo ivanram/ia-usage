@@ -96,6 +96,7 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.RefreshRequested += async (s, e) => await RefreshAllAsync();
         _popup.SettingsRequested += (s, e) => { _popup.Hide(); OpenSettings(); };
         _popup.StatsRequested += (s, e) => OpenStats();
+        _popup.CloseRequested += (s, e) => _popup.Hide();
         _popup.WarmUp();
 
         ApplyTelegramSettings();
@@ -225,6 +226,56 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.ShowNearCursor();
     }
 
+    /// <summary>Re-renders the popup against the current snapshots/settings, but only if it's already on screen — a no-op cost check, never forces it open.</summary>
+    private void RenderPopupIfVisible()
+    {
+        if (_popup.IsVisible) RenderPopup();
+    }
+
+    private void RenderPopup()
+    {
+        var enabled = _providers.Where(IsEnabled).ToList();
+        var ready = enabled.Where(p => _lastSnapshots.ContainsKey(p.Name)).Select(p => _lastSnapshots[p.Name]);
+        _popup.Render(ready, hasAnyEnabled: enabled.Count > 0, lastUpdated: _lastUpdated, totalEnabled: enabled.Count);
+    }
+
+    /// <summary>
+    /// Settings' Apariencia card calls this live, as the user drags the
+    /// style/opacity/blur controls — before they've hit Guardar. Bringing
+    /// the panel up (pinned, so it doesn't auto-hide out from under them)
+    /// is the whole point: there's no other way to actually judge how a
+    /// blur/opacity choice looks against the real desktop behind it.
+    /// Fire-and-forget: the caller is a synchronous UI event handler
+    /// (slider drag, radio click) and PreviewStyleAsync's own await is only
+    /// there to ride out DWM's blur-toggle fade — nothing here needs to
+    /// block on it.
+    /// </summary>
+    private void PreviewAppearance(PopupWindowStyle style, int opacityPercent, int blurPercent, string accentColor)
+    {
+        // WPF's modal ShowDialog() disables every OTHER open window
+        // (Settings' own has no owner set, so this includes the popup even
+        // though it isn't Settings' child) for as long as the dialog is up.
+        // A disabled AllowsTransparency window loses correct layered
+        // compositing — showing a hard gray box where it should be
+        // invisible — and Measure() against it can't be trusted either,
+        // which is what made the panel open at the wrong size and only
+        // snap right on the next render. Re-enabling it here undoes both.
+        _popup.IsEnabled = true;
+
+        var enabled = _providers.Where(IsEnabled).ToList();
+        var ready = enabled.Where(p => _lastSnapshots.ContainsKey(p.Name)).Select(p => _lastSnapshots[p.Name]);
+        // Same accent-sentinel handling as ApplyTheme() below — kept in
+        // sync here so the bars' color previews live too, not just the
+        // panel's base tint/blur.
+        var flatBarColorHex = accentColor == AppSettings.OriginalAccentSentinel ? null : accentColor;
+
+        var settings = _openSettingsWindow;
+        _ = _popup.PreviewStyleAsync(
+            style, opacityPercent, blurPercent, flatBarColorHex,
+            ready, hasAnyEnabled: enabled.Count > 0, lastUpdated: _lastUpdated, totalEnabled: enabled.Count,
+            besideLeft: settings?.Left, besideTop: settings?.Top, besideWidth: settings?.ActualWidth, besideHeight: settings?.ActualHeight);
+    }
+
     private bool IsEnabled(IUsageProvider p) => p switch
     {
         ClaudeProvider => _settings.ShowClaude,
@@ -290,7 +341,8 @@ public sealed class TrayOrchestrator : IDisposable
                 _ = LoginAsync(provider);
             },
             previewTheme: ThemeHelper.Apply,
-            previewLanguage: PreviewLanguage);
+            previewLanguage: PreviewLanguage,
+            previewAppearance: PreviewAppearance);
         _openSettingsWindow = window;
 
         window.ShowDialog();
@@ -298,8 +350,9 @@ public sealed class TrayOrchestrator : IDisposable
 
         if (!window.Saved)
         {
-            ApplyTheme(); // revert any live theme preview back to the saved setting
+            ApplyTheme(); // revert any live theme/appearance preview back to the saved settings
             PreviewLanguage(_settings.Language); // same revert, for the language preview
+            RenderPopupIfVisible(); // ApplyTheme() only resets the popup's fields, not its already-drawn visuals
             return;
         }
 
@@ -349,6 +402,9 @@ public sealed class TrayOrchestrator : IDisposable
         ThemeHelper.ApplyAccent(_settings.AccentColor);
         _popup.FlatBarColorHex = _settings.AccentColor == AppSettings.OriginalAccentSentinel ? null : _settings.AccentColor;
         _popup.AnimationsEnabled = _settings.AnimationsEnabled;
+        _popup.StyleMode = _settings.PopupWindowStyleMode;
+        _popup.OpacityPercent = _settings.PopupOpacityPercent;
+        _popup.BlurPercent = _settings.PopupBlurPercent;
         _trayMenu.ApplyTheme(new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark);
         _statsWindow?.RefreshTheme();
     }

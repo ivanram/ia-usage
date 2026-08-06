@@ -33,6 +33,14 @@ public partial class SettingsWindow : Window
     private int _selectedHoverDelay;
     private readonly Button[] _accentButtons = new Button[ThemeHelper.AccentSwatches.Length + 1];
     private string _selectedAccent;
+    private readonly Button[] _windowStyleButtons = new Button[2];
+    private PopupWindowStyle _selectedWindowStyle;
+    private Slider _opacitySlider = null!;
+    private TextBox _opacityTextBox = null!;
+    private Slider _blurSlider = null!;
+    private TextBox _blurTextBox = null!;
+    private FrameworkElement _opacityRow = null!;
+    private FrameworkElement _blurRow = null!;
     private AppLanguage _selectedLanguage;
     private ToggleButton _autoCheckUpdates = null!;
 
@@ -61,6 +69,7 @@ public partial class SettingsWindow : Window
     private readonly Action<string> _triggerLogin;
     private readonly Action<AppTheme> _previewTheme;
     private readonly Action<AppLanguage> _previewLanguage;
+    private readonly Action<PopupWindowStyle, int, int, string> _previewAppearance;
     // Built in the constructor and sent to Windows later in OnSourceInitialized
     // — building these GDI+ icons right as the native HWND is being created
     // (i.e. doing it inside OnSourceInitialized itself) raced with that setup
@@ -73,7 +82,7 @@ public partial class SettingsWindow : Window
     public AppSettings Result { get; private set; }
     public bool Saved { get; private set; }
 
-    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme, Action<AppLanguage> previewLanguage)
+    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme, Action<AppLanguage> previewLanguage, Action<PopupWindowStyle, int, int, string> previewAppearance)
     {
         InitializeComponent();
         Result = current;
@@ -82,11 +91,13 @@ public partial class SettingsWindow : Window
         _isDark = ThemeHelper.ResolveIsDark(current.Theme);
         _selectedHoverDelay = current.HoverDelaySeconds;
         _selectedAccent = current.AccentColor;
+        _selectedWindowStyle = current.PopupWindowStyleMode;
         _selectedLanguage = current.Language;
         _isLoggedIn = isLoggedIn;
         _triggerLogin = triggerLogin;
         _previewTheme = previewTheme;
         _previewLanguage = previewLanguage;
+        _previewAppearance = previewAppearance;
 
         // Drawn fresh at 18px (CaptionIcon's actual display size) rather
         // than extracted from the exe and downscaled — scaling a 32px+
@@ -351,6 +362,102 @@ public partial class SettingsWindow : Window
             swatches.Children.Add(swatch);
         }
         stack.Children.Add(swatches);
+
+        stack.Children.Add(new Border { Height = 20 });
+        stack.Children.Add(Hint(Strings.T("appearance.windowstyle.hint")));
+
+        var (windowStyleRow, windowStyleButtons) = BuildSegmented(
+            new[] { Strings.T("appearance.windowstyle.standard"), Strings.T("appearance.windowstyle.blur") },
+            SelectWindowStyle,
+            (int)_selectedWindowStyle);
+        Array.Copy(windowStyleButtons, _windowStyleButtons, windowStyleButtons.Length);
+        stack.Children.Add(windowStyleRow);
+
+        stack.Children.Add(new Border { Height = 14 });
+
+        _opacityRow = BuildPercentSliderRow(Strings.T("appearance.opacity.label"), Result.PopupOpacityPercent, out _opacitySlider, out _opacityTextBox);
+        stack.Children.Add(_opacityRow);
+
+        _blurRow = BuildPercentSliderRow(Strings.T("appearance.blur.label"), Result.PopupBlurPercent, out _blurSlider, out _blurTextBox);
+        stack.Children.Add(_blurRow);
+
+        // Live preview as the user drags either slider — see NotifyAppearancePreview.
+        _opacitySlider.ValueChanged += (s, e) => NotifyAppearancePreview();
+        _blurSlider.ValueChanged += (s, e) => NotifyAppearancePreview();
+
+        UpdateWindowStyleRowVisibility();
+    }
+
+    private void SelectWindowStyle(int index)
+    {
+        _selectedWindowStyle = (PopupWindowStyle)index;
+        StyleSegmented(_windowStyleButtons, index);
+        UpdateWindowStyleRowVisibility();
+        NotifyAppearancePreview();
+    }
+
+    /// <summary>
+    /// Pops the main panel up (pinned) showing exactly what the currently
+    /// selected style/opacity/blur/theme/accent would look like — nothing
+    /// is saved to Result here, that only happens on Guardar (see
+    /// SnapshotIntoResult). Theme itself isn't passed through: SelectTheme
+    /// already applies it globally via _previewTheme/ThemeHelper before
+    /// calling this, and the popup's own re-render picks the live palette
+    /// straight from there.
+    /// </summary>
+    private void NotifyAppearancePreview() =>
+        _previewAppearance(_selectedWindowStyle, (int)_opacitySlider.Value, (int)_blurSlider.Value, _selectedAccent);
+
+    private void UpdateWindowStyleRowVisibility()
+    {
+        _opacityRow.Visibility = _selectedWindowStyle == PopupWindowStyle.Standard ? Visibility.Visible : Visibility.Collapsed;
+        _blurRow.Visibility = _selectedWindowStyle == PopupWindowStyle.Blur ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Same label+textbox-above-a-1..100-slider layout as the update-frequency slider, generalized for the opacity/blur rows.</summary>
+    private FrameworkElement BuildPercentSliderRow(string label, int initialValue, out Slider slider, out TextBox textBox)
+    {
+        var container = new StackPanel();
+
+        var labelRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        labelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        labelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var labelBlock = new TextBlock { Text = label, FontSize = BodySize, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        Grid.SetColumn(labelBlock, 0);
+
+        var localTextBox = new TextBox
+        {
+            Text = Math.Clamp(initialValue, 1, 100).ToString(),
+            Width = 50,
+            TextAlignment = TextAlignment.Center,
+            Style = (Style)FindResource("FlatTextBox"),
+        };
+        Grid.SetColumn(localTextBox, 1);
+
+        labelRow.Children.Add(labelBlock);
+        labelRow.Children.Add(localTextBox);
+        container.Children.Add(labelRow);
+
+        var localSlider = new Slider
+        {
+            Minimum = 1,
+            Maximum = 100,
+            Value = Math.Clamp(initialValue, 1, 100),
+            Style = (Style)FindResource("FlatSlider"),
+            Margin = new Thickness(0, 4, 0, 16),
+        };
+        localSlider.ValueChanged += (s, e) => localTextBox.Text = ((int)localSlider.Value).ToString();
+        localTextBox.LostFocus += (s, e) =>
+        {
+            if (int.TryParse(localTextBox.Text, out var v))
+                localSlider.Value = Math.Clamp(v, 1, 100);
+        };
+        container.Children.Add(localSlider);
+
+        slider = localSlider;
+        textBox = localTextBox;
+        return container;
     }
 
     private Button BuildAccentSwatch(Brush background, string value)
@@ -390,6 +497,7 @@ public partial class SettingsWindow : Window
         // whichever variant was set for the previous base theme.
         ThemeHelper.ApplyAccent(_selectedAccent);
         DwmHelper.SetTitleBarDarkMode(new WindowInteropHelper(this).Handle, ThemeHelper.ResolveIsDark(_selectedTheme));
+        NotifyAppearancePreview();
     }
 
     private void SelectAccent(string value)
@@ -401,6 +509,7 @@ public partial class SettingsWindow : Window
             _accentButtons[i].Tag = swatchValue == value ? "Selected" : null;
         }
         ThemeHelper.ApplyAccent(value);
+        NotifyAppearancePreview();
     }
 
     private (UniformGrid Row, Button[] Buttons) BuildSegmented(string[] labels, Action<int> onSelect, int selectedIndex)
@@ -620,6 +729,9 @@ public partial class SettingsWindow : Window
             Theme = _selectedTheme,
             AccentColor = _selectedAccent,
             AnimationsEnabled = _animationsEnabled.IsChecked == true,
+            PopupWindowStyleMode = _selectedWindowStyle,
+            PopupOpacityPercent = (int)_opacitySlider.Value,
+            PopupBlurPercent = (int)_blurSlider.Value,
             ShowClaude = _showClaude.IsChecked == true,
             ShowChatGpt = _showChatGpt.IsChecked == true,
             ShowGrok = _showGrok.IsChecked == true,
