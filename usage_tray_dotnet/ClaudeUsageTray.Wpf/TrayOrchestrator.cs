@@ -289,6 +289,7 @@ public sealed class TrayOrchestrator : IDisposable
     // icons, SettingsWindow's card headers).
     private const string MenuIconRefresh = "";
     private const string MenuIconSettings = "";
+    private const string MenuIconAbout = "";
     private const string MenuIconExit = "";
 
     /// <summary>
@@ -303,6 +304,7 @@ public sealed class TrayOrchestrator : IDisposable
 
         _trayMenu.AddItem(MenuIconRefresh, Strings.T("menu.refresh"), () => _ = RefreshAllAsync());
         _trayMenu.AddItem(MenuIconSettings, Strings.T("menu.settings"), OpenSettings);
+        _trayMenu.AddItem(MenuIconAbout, Strings.T("menu.about"), OpenAbout);
 
         var loginProviders = _providers
             .Where(p => p.SupportsLogin && !(_lastSnapshots.TryGetValue(p.Name, out var s) && s.Ok))
@@ -342,7 +344,8 @@ public sealed class TrayOrchestrator : IDisposable
             },
             previewTheme: ThemeHelper.Apply,
             previewLanguage: PreviewLanguage,
-            previewAppearance: PreviewAppearance);
+            previewAppearance: PreviewAppearance,
+            openAbout: OpenAbout);
         _openSettingsWindow = window;
 
         window.ShowDialog();
@@ -363,6 +366,22 @@ public sealed class TrayOrchestrator : IDisposable
         ApplyRefreshInterval();
         ApplyTelegramSettings();
         _ = RefreshAllAsync();
+    }
+
+    private AboutWindow? _openAboutWindow;
+
+    /// <summary>Same show-or-activate singleton pattern as _openSettingsWindow — a second click just brings the existing window forward instead of opening a duplicate.</summary>
+    private void OpenAbout()
+    {
+        if (_openAboutWindow is not null)
+        {
+            _openAboutWindow.Activate();
+            return;
+        }
+
+        _openAboutWindow = new AboutWindow();
+        _openAboutWindow.Closed += (s, e) => _openAboutWindow = null;
+        _openAboutWindow.Show();
     }
 
     /// <summary>Applies a language process-wide and rebuilds anything with text already baked in at construction time — currently just the tray menu.</summary>

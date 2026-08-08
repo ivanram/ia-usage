@@ -70,6 +70,7 @@ public partial class SettingsWindow : Window
     private readonly Action<AppTheme> _previewTheme;
     private readonly Action<AppLanguage> _previewLanguage;
     private readonly Action<PopupWindowStyle, int, int, string> _previewAppearance;
+    private readonly Action _openAbout;
     // Built in the constructor and sent to Windows later in OnSourceInitialized
     // — building these GDI+ icons right as the native HWND is being created
     // (i.e. doing it inside OnSourceInitialized itself) raced with that setup
@@ -82,7 +83,7 @@ public partial class SettingsWindow : Window
     public AppSettings Result { get; private set; }
     public bool Saved { get; private set; }
 
-    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme, Action<AppLanguage> previewLanguage, Action<PopupWindowStyle, int, int, string> previewAppearance)
+    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme, Action<AppLanguage> previewLanguage, Action<PopupWindowStyle, int, int, string> previewAppearance, Action openAbout)
     {
         InitializeComponent();
         Result = current;
@@ -98,6 +99,7 @@ public partial class SettingsWindow : Window
         _previewTheme = previewTheme;
         _previewLanguage = previewLanguage;
         _previewAppearance = previewAppearance;
+        _openAbout = openAbout;
 
         // Drawn fresh at 18px (CaptionIcon's actual display size) rather
         // than extracted from the exe and downscaled — scaling a 32px+
@@ -768,19 +770,6 @@ public partial class SettingsWindow : Window
         Close();
     }
 
-    private async void OnVersionClick(object sender, RoutedEventArgs e)
-    {
-        VersionButton.IsEnabled = false;
-        var original = VersionButton.Content;
-        VersionButton.Content = Strings.T("settings.version.checking");
-        try
-        {
-            await UpdateService.CheckAndPromptAsync(manualCheck: true);
-        }
-        finally
-        {
-            VersionButton.Content = original;
-            VersionButton.IsEnabled = true;
-        }
-    }
+    /// <summary>The button now opens "Acerca de" (which owns the actual "buscar actualizaciones" action next to the app name) instead of checking for updates inline.</summary>
+    private void OnVersionClick(object sender, RoutedEventArgs e) => _openAbout();
 }

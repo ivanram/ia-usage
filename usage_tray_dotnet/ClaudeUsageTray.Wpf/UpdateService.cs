@@ -162,7 +162,7 @@ internal static class UpdateService
             settings.LastUpdateCheckAt = DateTime.Now;
             settings.Save();
 
-            var (version, downloadUrl, rateLimited) = await GetLatestReleaseAsync();
+            var (version, downloadUrl, changelog, rateLimited) = await GetLatestReleaseAsync();
             if (version is null || downloadUrl is null)
             {
                 if (manualCheck)
@@ -183,7 +183,8 @@ internal static class UpdateService
 
             var choice = AppDialogWindow.ShowUpdatePrompt(
                 Strings.T("dialog.update.title"),
-                Strings.F("dialog.update.message", $"{version.Major}.{version.Minor}.{version.Build}"));
+                Strings.F("dialog.update.message", $"{version.Major}.{version.Minor}.{version.Build}"),
+                changelog);
 
             if (choice == DialogChoice.Later)
             {
@@ -225,7 +226,7 @@ internal static class UpdateService
     /// other failures so the dialog can say "try again shortly" instead of
     /// a generic, slightly alarming "couldn't check for updates".
     /// </summary>
-    private static async Task<(Version? version, string? downloadUrl, bool rateLimited)> GetLatestReleaseAsync()
+    private static async Task<(Version? version, string? downloadUrl, string? changelog, bool rateLimited)> GetLatestReleaseAsync()
     {
         using var http = new HttpClient();
         http.DefaultRequestHeaders.UserAgent.ParseAdd("ClaudeUsageTray-UpdateChecker");
@@ -233,14 +234,21 @@ internal static class UpdateService
         if (!resp.IsSuccessStatusCode)
         {
             Log($"GetLatestReleaseAsync: http {(int)resp.StatusCode}");
-            return (null, null, resp.StatusCode == System.Net.HttpStatusCode.Forbidden);
+            return (null, null, null, resp.StatusCode == System.Net.HttpStatusCode.Forbidden);
         }
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStreamAsync());
         var root = doc.RootElement;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
         var versionText = tag.TrimStart('v', 'V');
-        if (!Version.TryParse(versionText, out var version)) return (null, null, false);
+        if (!Version.TryParse(versionText, out var version)) return (null, null, null, false);
+
+        // The release body is the exact changelog written when the release
+        // was published (see the "Add changelog generation to the release
+        // process" note) — shown as-is in the update prompt so the user
+        // sees what they're about to install, straight from the source of
+        // truth instead of a separate copy that could drift out of sync.
+        var changelog = root.TryGetProperty("body", out var bodyEl) ? bodyEl.GetString() : null;
 
         // Each release carries two assets: the framework-dependent "-fx"
         // build (a few MB, needs the .NET 8 Desktop Runtime already on the
@@ -265,7 +273,7 @@ internal static class UpdateService
                 else fallbackUrl ??= url;
             }
         }
-        return (version, fxUrl ?? fallbackUrl, false);
+        return (version, fxUrl ?? fallbackUrl, changelog, false);
     }
 
     private static async Task DownloadAndApplyAsync(string downloadUrl, Version version)

@@ -213,6 +213,53 @@ public partial class StatsWindow : Window
         Top = top;
     }
 
+    /// <summary>
+    /// The chart tabs stay scroll-free by shrinking/growing each chart to
+    /// exactly fill whatever height the window already has (see the
+    /// chartHeight math above) — but the calendar grid's cell height is
+    /// fixed (MinHeight 54 per day), so a 6-row month simply doesn't fit in
+    /// a window sized for the chart tabs and falls back to the outer
+    /// ScrollViewer. Instead of squeezing calendar cells to fit, this grows
+    /// or shrinks the WINDOW itself to match the calendar's real content
+    /// height, clamped to the current monitor's work area exactly like
+    /// <see cref="FitToWorkArea"/> already does for initial placement.
+    /// </summary>
+    private void ResizeToFitCalendar()
+    {
+        // A maximized window already offers generous room; growing/
+        // shrinking it here would fight OnMaximizeClick's own sizing and
+        // silently "un-maximize" it the next time the calendar re-renders.
+        if (_isMaximized) return;
+
+        RangeRow.UpdateLayout();
+        var rangeRowHeight = RangeRow.ActualHeight;
+
+        var contentWidth = ContentHost.ActualWidth > 0 ? ContentHost.ActualWidth : Width;
+        ContentHost.Measure(new Size(contentWidth, double.PositiveInfinity));
+        var contentHeight = ContentHost.DesiredSize.Height;
+
+        const double TitleRowHeight = 36;
+        const double ChromeSlack = 4;
+        var desiredHeight = TitleRowHeight + rangeRowHeight + contentHeight + ChromeSlack;
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var centerPhysical = new NativeScreenHelper.POINT
+        {
+            X = (int)((Left + Width / 2) * dpi.DpiScaleX),
+            Y = (int)((Top + Height / 2) * dpi.DpiScaleY),
+        };
+        var workArea = NativeScreenHelper.GetWorkAreaForPoint(centerPhysical);
+        var workTopDip = workArea.Top / dpi.DpiScaleY;
+        var workBottomDip = workArea.Bottom / dpi.DpiScaleY;
+        var maxHeight = workBottomDip - workTopDip;
+
+        var newHeight = Math.Clamp(desiredHeight, MinHeight, maxHeight);
+        if (Math.Abs(newHeight - Height) < 1) return;
+
+        Height = newHeight;
+        if (Top + Height > workBottomDip) Top = Math.Max(workTopDip, workBottomDip - Height);
+    }
+
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 
     /// <summary>
@@ -629,6 +676,7 @@ public partial class StatsWindow : Window
         if (_showCalendar)
         {
             ContentHost.Children.Add(BuildCalendarView(textPrimary, textSecondary, accent, gridBrush));
+            ResizeToFitCalendar();
             return;
         }
 

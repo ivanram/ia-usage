@@ -357,7 +357,7 @@
             <Grid Margin="28,16">
                 <Button x:Name="VersionButton" Style="{StaticResource LinkButton}"
                         HorizontalAlignment="Left" VerticalAlignment="Center"
-                        ToolTip="Buscar actualizaciones" Click="OnVersionClick" />
+                        Click="OnVersionClick" />
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button x:Name="CancelButton" Content="Cancelar" Style="{StaticResource SecondaryButton}"
                             Width="120" Margin="0,0,12,0" Click="OnCancelClick" IsCancel="True" />

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
@@ -51,6 +52,43 @@ public partial class AppDialogWindow : Window
         TitleText.Visibility = string.IsNullOrEmpty(title) ? Visibility.Collapsed : Visibility.Visible;
     }
 
+    /// <summary>
+    /// <paramref name="changelog"/> is the raw GitHub release body (markdown
+    /// "- " bullets) fetched live from the release being offered — not the
+    /// locally-embedded <see cref="Changelog"/> used by the About window,
+    /// since the CURRENTLY RUNNING (old) build has no way to know what's in
+    /// a version it hasn't installed yet. Hidden entirely when there's
+    /// nothing to show instead of leaving an empty scroll area.
+    /// </summary>
+    private void SetChangelog(string? changelog)
+    {
+        var bullets = ParseBullets(changelog);
+        if (bullets.Count == 0)
+        {
+            ChangelogScroll.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ChangelogText.Text = string.Join("\n", bullets.Select(b => $"•  {b}"));
+        ChangelogScroll.Visibility = Visibility.Visible;
+    }
+
+    private static List<string> ParseBullets(string? text)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrWhiteSpace(text)) return result;
+
+        foreach (var rawLine in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith("- ")) line = line[2..].Trim();
+            else if (line.StartsWith("-")) line = line[1..].Trim();
+            if (line.Length == 0) continue;
+            result.Add(line);
+        }
+        return result;
+    }
+
     /// <summary>Two-button Sí/No prompt. Returns true if the user picked Sí.</summary>
     public static bool ShowYesNo(string title, string message)
     {
@@ -76,11 +114,12 @@ public partial class AppDialogWindow : Window
     }
 
     /// <summary>Three-way Sí / Hoy no, mañana / No prompt used for the update-available check.</summary>
-    public static DialogChoice ShowUpdatePrompt(string title, string message)
+    public static DialogChoice ShowUpdatePrompt(string title, string message, string? changelog = null)
     {
         var dialog = new AppDialogWindow();
         dialog.SetTitle(title);
         dialog.MessageText.Text = message;
+        dialog.SetChangelog(changelog);
         dialog.NoButton.Content = Strings.T("dialog.no");
         dialog.LaterButton.Content = Strings.T("dialog.later");
         dialog.LaterButton.Visibility = Visibility.Visible;

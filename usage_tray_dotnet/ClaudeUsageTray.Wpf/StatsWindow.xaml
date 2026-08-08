@@ -62,7 +62,7 @@
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="1" Margin="20,0,20,10">
+        <Grid x:Name="RangeRow" Grid.Row="1" Margin="20,0,20,10">
             <StackPanel x:Name="RangeSelectorHost" Orientation="Horizontal" HorizontalAlignment="Left" />
             <StackPanel x:Name="PromptModeSelectorHost" Orientation="Horizontal" HorizontalAlignment="Right" />
         </Grid>
