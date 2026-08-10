@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("1.19.7",
+        [
+            "Nuevo archivo \"diagnostico_inicio.txt\" junto al ejecutable: registra cada paso del arranque (mutex, ventana de bandeja, errores) para poder saber por qué no abre en un equipo donde falla sin dejar ningún proceso ni ventana.",
+        ]),
         new("1.19.6",
         [
             "El enlace de \"Buscar actualizaciones\" en Acerca de ahora va junto a la versión, como texto, en vez de un icono junto al nombre.",
