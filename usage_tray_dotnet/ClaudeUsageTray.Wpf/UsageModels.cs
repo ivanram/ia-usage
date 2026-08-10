@@ -13,6 +13,8 @@ public sealed class UsageBar
     /// display string that changes with the app's language setting.
     /// </summary>
     public bool IsPrimary { get; init; }
+    /// <summary>Short, notification-sized cadence tag (e.g. "semanal", "5 horas") for the "(...)" suffix on reset/exhausted alerts — <see cref="Label"/> itself reads more like "Límite semanal", too long to parenthesize.</summary>
+    public string Qualifier { get; init; } = "";
 }
 
 public sealed class UsageSnapshot

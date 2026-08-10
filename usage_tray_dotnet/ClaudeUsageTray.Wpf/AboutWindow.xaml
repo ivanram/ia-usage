@@ -32,26 +32,25 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="CheckUpdateButton" TargetType="Button">
-            <Setter Property="Width" Value="24" />
-            <Setter Property="Height" Value="24" />
-            <Setter Property="Margin" Value="8,0,0,0" />
+        <Style x:Key="CheckUpdateLink" TargetType="Button">
+            <Setter Property="FontSize" Value="12.5" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="8,2,0,0" />
+            <Setter Property="Foreground" Value="{DynamicResource MaterialDesign.Brush.Primary}" />
             <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bg" CornerRadius="12" Background="Transparent">
-                            <TextBlock x:Name="Glyph" Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                       Foreground="{DynamicResource MaterialDesignBody}" Opacity="0.7"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
+                        <ContentPresenter x:Name="Cp" HorizontalAlignment="Left" VerticalAlignment="Center" />
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#14808080" />
+                                <Setter TargetName="Cp" Property="Opacity" Value="0.75" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Glyph" Property="Opacity" Value="0.3" />
+                                <Setter TargetName="Cp" Property="Opacity" Value="0.5" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -80,12 +79,12 @@
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Image x:Name="AppIcon" Width="40" Height="40" Margin="0,0,14,0" VerticalAlignment="Center" />
                         <StackPanel VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock x:Name="AppNameText" FontSize="16" FontWeight="Medium" Foreground="{DynamicResource MaterialDesignBody}" VerticalAlignment="Center" />
-                                <Button x:Name="CheckUpdateBtn" Style="{StaticResource CheckUpdateButton}"
+                            <TextBlock x:Name="AppNameText" FontSize="16" FontWeight="Medium" Foreground="{DynamicResource MaterialDesignBody}" />
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                <TextBlock x:Name="VersionText" FontSize="12.5" Opacity="0.65" Foreground="{DynamicResource MaterialDesignBody}" VerticalAlignment="Center" />
+                                <Button x:Name="CheckUpdateBtn" Style="{StaticResource CheckUpdateLink}"
                                         Click="OnCheckUpdateClick" />
                             </StackPanel>
-                            <TextBlock x:Name="VersionText" FontSize="12.5" Opacity="0.65" Foreground="{DynamicResource MaterialDesignBody}" Margin="0,2,0,0" />
                         </StackPanel>
                     </StackPanel>
                     <Button x:Name="CloseButton" Style="{StaticResource AboutCloseButton}"

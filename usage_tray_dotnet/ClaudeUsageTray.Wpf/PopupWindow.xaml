@@ -52,7 +52,7 @@
                 <Button x:Name="StatsButton" Width="26" Height="26"
                         HorizontalAlignment="Right" VerticalAlignment="Top"
                         Margin="0,8,40,0" Cursor="Hand"
-                        Click="OnStatsClick" ToolTip="Estadísticas">
+                        Click="OnStatsClick">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border x:Name="StatsBg" CornerRadius="13" Background="Transparent">
@@ -81,7 +81,7 @@
                 <Button x:Name="CloseButton" Width="26" Height="26"
                         HorizontalAlignment="Right" VerticalAlignment="Top"
                         Margin="0,8,72,0" Cursor="Hand" Visibility="Hidden"
-                        Click="OnCloseClick" ToolTip="Cerrar panel">
+                        Click="OnCloseClick">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border x:Name="CloseBg" CornerRadius="13" Background="Transparent">
@@ -105,8 +105,7 @@
                 <ToggleButton x:Name="PinButton" Width="26" Height="26"
                               HorizontalAlignment="Right" VerticalAlignment="Top"
                               Margin="0,8,8,0" Cursor="Hand"
-                              Checked="OnPinToggled" Unchecked="OnPinToggled"
-                              ToolTip="Fijar panel (no se cerrará solo)">
+                              Checked="OnPinToggled" Unchecked="OnPinToggled">
                     <ToggleButton.Template>
                         <ControlTemplate TargetType="ToggleButton">
                             <Border x:Name="Bg" CornerRadius="13" Background="Transparent">

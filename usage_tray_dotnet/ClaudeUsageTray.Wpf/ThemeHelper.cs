@@ -1,4 +1,5 @@
 using System.IO;
+using System.Windows;
 using System.Windows.Media;
 using MaterialDesignThemes.Wpf;
 
@@ -69,11 +70,34 @@ internal static class ThemeHelper
             var color = (Color)ColorConverter.ConvertFromString(hex);
             palette.SetPrimaryColor(color);
             paletteHelper.SetTheme(palette);
+
+            // MaterialDesignThemes' own black/white pick for this resource
+            // (recomputed by SetTheme above) leaned black for several of our
+            // saturated mid-tone swatches — azul, morado, verde, naranja,
+            // rosa, oliva — where white actually reads better. Overriding it
+            // here with a real WCAG contrast-ratio comparison (pick whichever
+            // of black/white has the higher ratio against this exact color)
+            // instead of the library's simpler luminance threshold.
+            Application.Current.Resources["MaterialDesign.Brush.Primary.Foreground"] = new SolidColorBrush(IdealForeground(color));
         }
         catch (Exception ex)
         {
             LogFailure("ApplyAccent", ex);
         }
+    }
+
+    private static Color IdealForeground(Color background)
+    {
+        double Linearize(byte channel)
+        {
+            var c = channel / 255.0;
+            return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+        }
+
+        var luminance = 0.2126 * Linearize(background.R) + 0.7152 * Linearize(background.G) + 0.0722 * Linearize(background.B);
+        var contrastWithBlack = (luminance + 0.05) / 0.05;
+        var contrastWithWhite = 1.05 / (luminance + 0.05);
+        return contrastWithWhite >= contrastWithBlack ? Colors.White : Colors.Black;
     }
 
     private static void LogFailure(string method, Exception ex)

@@ -17,7 +17,7 @@ public partial class AboutWindow : Window
         AppIcon.Source = Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
 
         AppNameText.Text = Strings.T("app.name");
-        ToolTipService.SetToolTip(CheckUpdateBtn, Strings.T("about.checkupdate.tooltip"));
+        CheckUpdateBtn.Content = Strings.T("about.checkupdate.link");
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         VersionText.Text = version is null ? "" : Strings.F("about.version", $"{version.Major}.{version.Minor}.{version.Build}");
 
@@ -64,12 +64,14 @@ public partial class AboutWindow : Window
     private async void OnCheckUpdateClick(object sender, RoutedEventArgs e)
     {
         CheckUpdateBtn.IsEnabled = false;
+        CheckUpdateBtn.Content = Strings.T("about.checkupdate.checking");
         try
         {
             await UpdateService.CheckAndPromptAsync(manualCheck: true);
         }
         finally
         {
+            CheckUpdateBtn.Content = Strings.T("about.checkupdate.link");
             CheckUpdateBtn.IsEnabled = true;
         }
     }

@@ -108,8 +108,8 @@ public sealed class ClaudeProvider : IUsageProvider
             Ok = true,
             Bars =
             {
-                new UsageBar { Label = Strings.T("provider.claude.5h"), Percent = fiveHour, ResetAt = fiveHourReset },
-                new UsageBar { Label = Strings.T("provider.weekly"), Percent = sevenDayPct, ResetAt = weeklyReset, IsPrimary = true },
+                new UsageBar { Label = Strings.T("provider.claude.5h"), Percent = fiveHour, ResetAt = fiveHourReset, Qualifier = Strings.T("qualifier.5h") },
+                new UsageBar { Label = Strings.T("provider.weekly"), Percent = sevenDayPct, ResetAt = weeklyReset, IsPrimary = true, Qualifier = Strings.T("qualifier.weekly") },
             },
             ExtraLine = creditsLine,
         };

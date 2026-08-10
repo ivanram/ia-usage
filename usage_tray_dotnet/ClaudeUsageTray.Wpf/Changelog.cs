@@ -15,6 +15,13 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("1.19.6",
+        [
+            "El enlace de \"Buscar actualizaciones\" en Acerca de ahora va junto a la versión, como texto, en vez de un icono junto al nombre.",
+            "Mejor contraste en los botones con color de acento (azul, morado, verde, naranja, rosa, oliva...): el texto ahora se calcula con una fórmula de contraste real en vez de dejarlo a la librería.",
+            "Los avisos de reinicio y de límite agotado (en el escritorio y por Telegram) ahora indican entre paréntesis si es el límite semanal, el de 5 horas, etc.",
+            "Correcciones (tooltips del panel flotante que se quedaban en español al cambiar el idioma a inglés).",
+        ]),
         new("1.19.5",
         [
             "Nueva ventana \"Acerca de\" (desde el menú de la bandeja o pulsando la versión en Ajustes): icono, versión, ruta del ejecutable, botón para buscar actualizaciones junto al nombre de la app, y esta misma lista de novedades.",

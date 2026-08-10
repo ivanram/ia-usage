@@ -697,10 +697,14 @@ public sealed class TrayOrchestrator : IDisposable
         // marking when a service actually resets is a data question, not a
         // notification preference. Only whether to actually show/send
         // anything is gated on notifyEnabled, at the bottom.
-        var resetDetected = false;
-        var exhaustedDetected = false;
+        // Which bar(s) actually triggered reset/exhausted this pass — kept
+        // as the bar's own short Qualifier ("semanal", "5 horas"...) rather
+        // than a plain bool, so the toast/Telegram message can say exactly
+        // which limit it's talking about instead of just the service name.
+        var resetQualifiers = new List<string>();
+        var exhaustedQualifiers = new List<string>();
         var weeklyResetDetected = false;
-        var telegramExhaustedWorthy = false;
+        var telegramExhaustedQualifiers = new List<string>();
         var telegramEightyWorthy = false;
         var stateChanged = false;
         foreach (var bar in snap.Bars)
@@ -710,7 +714,7 @@ public sealed class TrayOrchestrator : IDisposable
             {
                 if (prev >= 10 && bar.Percent < prev - 4)
                 {
-                    resetDetected = true;
+                    resetQualifiers.Add(bar.Qualifier);
                     // "Weekly" = whatever cadence the provider's own PRIMARY
                     // recurring quota bar resets on (see UsageBar.IsPrimary),
                     // never the short-window one (Claude's 5-hour limit) —
@@ -720,13 +724,13 @@ public sealed class TrayOrchestrator : IDisposable
                 }
                 // Fires once on the crossing into 100%, not on every
                 // refresh that happens to still read above the line afterward.
-                if (prev < 100 && bar.Percent >= 100) exhaustedDetected = true;
-                NotifyLog($"  [{key}] prev={prev} now={bar.Percent} resetDetected={resetDetected} exhaustedDetected={exhaustedDetected}");
+                if (prev < 100 && bar.Percent >= 100) exhaustedQualifiers.Add(bar.Qualifier);
+                NotifyLog($"  [{key}] prev={prev} now={bar.Percent} resetDetected={resetQualifiers.Count > 0} exhaustedDetected={exhaustedQualifiers.Count > 0}");
             }
             else
             {
-                if (bar.Percent >= 100) exhaustedDetected = true;
-                NotifyLog($"  [{key}] no previous reading, now={bar.Percent} exhaustedDetected={exhaustedDetected}");
+                if (bar.Percent >= 100) exhaustedQualifiers.Add(bar.Qualifier);
+                NotifyLog($"  [{key}] no previous reading, now={bar.Percent} exhaustedDetected={exhaustedQualifiers.Count > 0}");
             }
             _lastPercents[key] = bar.Percent;
 
@@ -740,7 +744,7 @@ public sealed class TrayOrchestrator : IDisposable
             var storedLevel = _notificationState.Level.TryGetValue(key, out var lvl) ? lvl : "none";
             if (currentLevel != storedLevel)
             {
-                if (currentLevel == "exhausted" && storedLevel != "exhausted") telegramExhaustedWorthy = true;
+                if (currentLevel == "exhausted" && storedLevel != "exhausted") telegramExhaustedQualifiers.Add(bar.Qualifier);
                 if (currentLevel == "eighty" && storedLevel == "none") telegramEightyWorthy = true;
                 _notificationState.Level[key] = currentLevel;
                 stateChanged = true;
@@ -749,22 +753,22 @@ public sealed class TrayOrchestrator : IDisposable
         if (stateChanged) _notificationState.Save();
         if (weeklyResetDetected) _historyStore.RecordReset(serviceName, DateTimeOffset.UtcNow);
 
-        NotifyLog($"CheckForReset [{serviceName}] result: resetDetected={resetDetected} exhaustedDetected={exhaustedDetected} weeklyResetDetected={weeklyResetDetected} telegramExhaustedWorthy={telegramExhaustedWorthy} telegramEightyWorthy={telegramEightyWorthy}");
+        NotifyLog($"CheckForReset [{serviceName}] result: resetDetected={resetQualifiers.Count > 0} exhaustedDetected={exhaustedQualifiers.Count > 0} weeklyResetDetected={weeklyResetDetected} telegramExhaustedWorthy={telegramExhaustedQualifiers.Count > 0} telegramEightyWorthy={telegramEightyWorthy}");
 
         if (!notifyEnabled) return;
 
-        if (resetDetected)
+        if (resetQualifiers.Count > 0)
         {
-            ShowResetToast(serviceName);
+            ShowResetToast(serviceName, resetQualifiers);
             // A reset can only ever be detected from a live in-session delta
             // (see the doc comment above), so unlike exhausted/eighty this
             // is already restart-safe without needing the persisted state.
-            if (_settings.TelegramNotifyUsage) _ = _telegram.SendNotificationAsync(Strings.F("toast.reset", serviceName));
+            if (_settings.TelegramNotifyUsage) _ = _telegram.SendNotificationAsync(Strings.F("toast.reset", serviceName, QualifierSuffix(resetQualifiers)));
         }
-        if (exhaustedDetected) ShowExhaustedToast(serviceName);
-        if (telegramExhaustedWorthy && _settings.TelegramNotifyUsage)
+        if (exhaustedQualifiers.Count > 0) ShowExhaustedToast(serviceName, exhaustedQualifiers);
+        if (telegramExhaustedQualifiers.Count > 0 && _settings.TelegramNotifyUsage)
         {
-            _ = _telegram.SendNotificationAsync(Strings.F("toast.exhausted", serviceName));
+            _ = _telegram.SendNotificationAsync(Strings.F("toast.exhausted", serviceName, QualifierSuffix(telegramExhaustedQualifiers)));
         }
         // 80% is a Telegram-only heads-up — no desktop toast/sound for it,
         // matching the user's ask for a lighter-weight "just so you know"
@@ -793,18 +797,25 @@ public sealed class TrayOrchestrator : IDisposable
         _ => false,
     };
 
-    private void ShowResetToast(string serviceName)
+    /// <summary>"(semanal)", "(5 horas)", or "(semanal, 5 horas)" if more than one bar triggered in the same pass — blank qualifiers (shouldn't happen once every provider sets one) are dropped rather than leaving a stray "()".</summary>
+    private static string QualifierSuffix(List<string> qualifiers)
     {
-        var message = Strings.F("toast.reset", serviceName);
+        var nonEmpty = qualifiers.Where(q => !string.IsNullOrEmpty(q)).Distinct().ToList();
+        return nonEmpty.Count == 0 ? "" : $" ({string.Join(", ", nonEmpty)})";
+    }
+
+    private void ShowResetToast(string serviceName, List<string> qualifiers)
+    {
+        var message = Strings.F("toast.reset", serviceName, QualifierSuffix(qualifiers));
         var toast = new ToastWindow();
         toast.ShowNear(serviceName, message);
         if (_settings.NotifySoundEnabled) PlaySound(ref _chimePlayer, "chime.wav");
     }
 
-    private void ShowExhaustedToast(string serviceName)
+    private void ShowExhaustedToast(string serviceName, List<string> qualifiers)
     {
         NotifyLog($"ShowExhaustedToast [{serviceName}] entered");
-        var message = Strings.F("toast.exhausted", serviceName);
+        var message = Strings.F("toast.exhausted", serviceName, QualifierSuffix(qualifiers));
         try
         {
             var toast = new ToastWindow();

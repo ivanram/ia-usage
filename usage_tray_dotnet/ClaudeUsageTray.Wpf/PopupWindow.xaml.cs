@@ -126,6 +126,10 @@ public partial class PopupWindow : Window
 
         ApplyThemeColors();
 
+        StatsButton.ToolTip = Strings.T("popup.tooltip.stats");
+        CloseButton.ToolTip = Strings.T("popup.tooltip.close");
+        PinButton.ToolTip = Strings.T("popup.tooltip.pin");
+
         ContentHost.Children.Clear();
         _animatedBars.Clear();
 
