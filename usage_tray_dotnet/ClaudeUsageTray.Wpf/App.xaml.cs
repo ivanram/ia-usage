@@ -23,14 +23,52 @@ public partial class App : Application
     /// download), nothing can write this file at all — that itself is a
     /// useful (if silent) data point: no file appearing means the block
     /// happened before our code ever ran.
+    ///
+    /// Falls back to the normal (always-writable) LogsDir if the exe's own
+    /// folder rejects the write — observed for real with an unelevated
+    /// launch from Program Files (x86), which every non-admin process is
+    /// denied write access to regardless of file ownership. Silently having
+    /// NEITHER location work would have looked identical to "the process
+    /// never started at all", which is exactly the ambiguity this file
+    /// exists to resolve.
     /// </summary>
-    private static readonly string StartupTraceLog = Path.Combine(
+    private static readonly string StartupTraceLogPrimary = Path.Combine(
         Path.GetDirectoryName(Environment.ProcessPath!) ?? AppContext.BaseDirectory,
         "diagnostico_inicio.txt");
+    private static readonly string StartupTraceLogFallback = Path.Combine(Paths.LogsDir, "diagnostico_inicio.txt");
+
+    private static void ResetStartupTrace()
+    {
+        TryWriteFile(StartupTraceLogPrimary, "");
+        TryWriteFile(StartupTraceLogFallback, "");
+    }
 
     private static void TraceStartup(string msg)
     {
-        try { File.AppendAllText(StartupTraceLog, $"{DateTime.Now:O} {msg}\n"); } catch { /* best effort */ }
+        var line = $"{DateTime.Now:O} {msg}\n";
+        if (TryAppendFile(StartupTraceLogPrimary, line)) return;
+        // Only worth spelling out once per run — the first fallback write
+        // is what actually explains why this file is here instead of next
+        // to the exe (see ResetStartupTrace's doc comment: usually a
+        // Program Files-style unelevated permissions block).
+        if (!_loggedFallback)
+        {
+            _loggedFallback = true;
+            TryAppendFile(StartupTraceLogFallback, $"{DateTime.Now:O} No se pudo escribir junto al ejecutable (¿permisos, p.ej. instalado en Program Files sin ser administrador?) — este log vive aquí en su lugar.\n");
+        }
+        TryAppendFile(StartupTraceLogFallback, line);
+    }
+
+    private static bool _loggedFallback;
+
+    private static bool TryWriteFile(string path, string content)
+    {
+        try { File.WriteAllText(path, content); return true; } catch { return false; }
+    }
+
+    private static bool TryAppendFile(string path, string content)
+    {
+        try { File.AppendAllText(path, content); return true; } catch { return false; }
     }
 
     // Held for the app's whole lifetime — releasing/GC'ing it would let a
@@ -51,7 +89,7 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        try { File.WriteAllText(StartupTraceLog, ""); } catch { /* best effort */ }
+        ResetStartupTrace();
         TraceStartup($"OnStartup entered. Args=[{string.Join(" ", e.Args)}] Version={System.Reflection.Assembly.GetExecutingAssembly().GetName().Version}");
 
         try

@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("1.19.8",
+        [
+            "Correcciones (el archivo de diagnóstico de arranque no se creaba si la app estaba instalada en una carpeta sin permisos de escritura, como Program Files, sin ser administrador; ahora cae automáticamente a la carpeta de logs habitual).",
+        ]),
         new("1.19.7",
         [
             "Nuevo archivo \"diagnostico_inicio.txt\" junto al ejecutable: registra cada paso del arranque (mutex, ventana de bandeja, errores) para poder saber por qué no abre en un equipo donde falla sin dejar ningún proceso ni ventana.",
