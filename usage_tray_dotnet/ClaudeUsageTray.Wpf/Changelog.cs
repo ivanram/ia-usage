@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.1",
+        [
+            "Correcciones (el instalador podía dar un error de permisos al elegir instalarlo manualmente en Program Files; ahora avisa y no deja continuar con esa carpeta).",
+        ]),
         new("2.0.0",
         [
             "El instalador (ClaudeUsageTraySetup.exe) ahora tiene una imagen de portada propia en el asistente de instalación, en vez del fondo genérico de Inno Setup.",
