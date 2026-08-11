@@ -5,6 +5,7 @@ publish/
 publish_tmp/
 publish_fx/
 publish_sc/
+publish_installer/
 
 # Packaged EXEs are distributed as GitHub Release assets, not repo content
 Releases/

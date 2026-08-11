@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.0",
+        [
+            "El instalador (ClaudeUsageTraySetup.exe) ahora tiene una imagen de portada propia en el asistente de instalación, en vez del fondo genérico de Inno Setup.",
+        ]),
         new("1.19.9",
         [
             "Nuevo instalador (ClaudeUsageTraySetup.exe) como alternativa a los ejecutables sueltos: instala en la carpeta del usuario (sin pedir permisos de administrador), crea acceso directo en el menú Inicio y opción de inicio automático con Windows, y evita de raíz los problemas de permisos de quien lo guardaba en Program Files.",
