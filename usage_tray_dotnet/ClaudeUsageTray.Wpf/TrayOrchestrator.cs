@@ -97,6 +97,14 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.SettingsRequested += (s, e) => { _popup.Hide(); OpenSettings(); };
         _popup.StatsRequested += (s, e) => OpenStats();
         _popup.CloseRequested += (s, e) => _popup.Hide();
+        // Compact/full is toggled from the popup itself, not Settings, so
+        // it's persisted here directly rather than through OnSaveClick.
+        _popup.SetCompactMode(_settings.PopupCompactMode);
+        _popup.CompactModeChanged += (s, e) =>
+        {
+            _settings.PopupCompactMode = _popup.CompactMode;
+            _settings.Save();
+        };
         _popup.WarmUp();
 
         ApplyTelegramSettings();
@@ -424,8 +432,18 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.StyleMode = _settings.PopupWindowStyleMode;
         _popup.OpacityPercent = _settings.PopupOpacityPercent;
         _popup.BlurPercent = _settings.PopupBlurPercent;
+        _popup.CompactVisibleServices = CompactVisibleServices();
         _trayMenu.ApplyTheme(new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark);
         _statsWindow?.RefreshTheme();
+    }
+
+    private HashSet<string> CompactVisibleServices()
+    {
+        var set = new HashSet<string>();
+        if (_settings.CompactShowClaude) set.Add("Claude");
+        if (_settings.CompactShowChatGpt) set.Add("ChatGPT");
+        if (_settings.CompactShowGrok) set.Add("Grok");
+        return set;
     }
 
     private void ApplyTelegramSettings()

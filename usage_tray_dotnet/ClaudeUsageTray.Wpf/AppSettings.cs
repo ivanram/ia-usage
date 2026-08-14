@@ -44,6 +44,13 @@ public sealed class AppSettings
     public string? TelegramBotToken { get; set; }
     public long? TelegramChatId { get; set; }
 
+    /// <summary>Whether the popup is currently showing its compact layout — toggled from the popup itself, not the Settings window, and persisted so a pinned compact panel reopens compact next launch.</summary>
+    public bool PopupCompactMode { get; set; }
+    /// <summary>Which services appear in the compact layout — independent of ShowClaude/ShowChatGpt/ShowGrok, which control the full layout instead.</summary>
+    public bool CompactShowClaude { get; set; } = true;
+    public bool CompactShowChatGpt { get; set; } = false;
+    public bool CompactShowGrok { get; set; } = false;
+
     public const string OriginalAccentSentinel = "ORIGINAL";
 
     public bool NotifyResetClaude { get; set; } = true;

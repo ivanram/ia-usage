@@ -15,6 +15,8 @@ public sealed class UsageBar
     public bool IsPrimary { get; init; }
     /// <summary>Short, notification-sized cadence tag (e.g. "semanal", "5 horas") for the "(...)" suffix on reset/exhausted alerts — <see cref="Label"/> itself reads more like "Límite semanal", too long to parenthesize.</summary>
     public string Qualifier { get; init; } = "";
+    /// <summary>1-3 character tag (e.g. "S:", "5H:") shown to the left of the bar in the popup's compact layout, when a service has more than one bar — left empty for a service's only bar, since there's nothing to disambiguate.</summary>
+    public string ShortPrefix { get; init; } = "";
 }
 
 public sealed class UsageSnapshot

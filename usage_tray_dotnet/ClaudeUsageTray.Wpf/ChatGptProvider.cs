@@ -52,8 +52,8 @@ public sealed class ChatGptProvider : IUsageProvider
         var rateLimit = usage.GetProperty("rate_limit");
         var bars = new List<UsageBar>();
 
-        AddWindowBar(bars, rateLimit, "primary_window", Strings.T("provider.weekly"), isPrimary: true, qualifier: Strings.T("qualifier.weekly"));
-        AddWindowBar(bars, rateLimit, "secondary_window", Strings.T("provider.chatgpt.short"), isPrimary: false, qualifier: Strings.T("qualifier.short"));
+        AddWindowBar(bars, rateLimit, "primary_window", Strings.T("provider.weekly"), isPrimary: true, qualifier: Strings.T("qualifier.weekly"), shortPrefix: Strings.T("prefix.weekly"));
+        AddWindowBar(bars, rateLimit, "secondary_window", Strings.T("provider.chatgpt.short"), isPrimary: false, qualifier: Strings.T("qualifier.short"), shortPrefix: Strings.T("prefix.short"));
 
         string? creditsLine = null;
         if (usage.TryGetProperty("credits", out var credits) && credits.ValueKind == JsonValueKind.Object
@@ -72,7 +72,7 @@ public sealed class ChatGptProvider : IUsageProvider
         };
     }
 
-    private static void AddWindowBar(List<UsageBar> bars, JsonElement rateLimit, string propertyName, string label, bool isPrimary, string qualifier)
+    private static void AddWindowBar(List<UsageBar> bars, JsonElement rateLimit, string propertyName, string label, bool isPrimary, string qualifier, string shortPrefix)
     {
         if (!rateLimit.TryGetProperty(propertyName, out var window) || window.ValueKind != JsonValueKind.Object)
         {
@@ -89,6 +89,6 @@ public sealed class ChatGptProvider : IUsageProvider
             resetAtValue = DateTimeOffset.FromUnixTimeSeconds(resetAt.GetInt64()).ToLocalTime();
         }
 
-        bars.Add(new UsageBar { Label = label, Percent = percent, ResetAt = resetAtValue, IsPrimary = isPrimary, Qualifier = qualifier });
+        bars.Add(new UsageBar { Label = label, Percent = percent, ResetAt = resetAtValue, IsPrimary = isPrimary, Qualifier = qualifier, ShortPrefix = shortPrefix });
     }
 }

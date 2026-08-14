@@ -54,10 +54,11 @@
         <Style x:Key="SegmentedButtonSelected" TargetType="Button" BasedOn="{StaticResource SegmentedButton}">
             <Setter Property="Background" Value="{DynamicResource MaterialDesign.Brush.Primary}" />
             <Setter Property="BorderBrush" Value="{DynamicResource MaterialDesign.Brush.Primary}" />
-            <!-- Auto-computed black/white contrast color for whatever the
-                 current accent swatch is, instead of a fixed White that
-                 goes unreadable against light accent colors. -->
-            <Setter Property="Foreground" Value="{DynamicResource MaterialDesign.Brush.Primary.Foreground}" />
+            <!-- Plain white, not the WCAG-computed black/white contrast
+                 brush — for these specific accent colors the auto-computed
+                 choice (technically higher-contrast) read as worse than
+                 white in practice, per direct feedback. -->
+            <Setter Property="Foreground" Value="White" />
         </Style>
 
         <Style x:Key="LinkButton" TargetType="Button">

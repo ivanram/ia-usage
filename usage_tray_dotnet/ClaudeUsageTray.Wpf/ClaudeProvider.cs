@@ -11,6 +11,13 @@ public sealed class ClaudeProvider : IUsageProvider
     public string ProfileFolderName => "WebView2_Claude";
 
     private static readonly string CreditsDebugFile = Path.Combine(Paths.LogsDir, "credits_debug.txt");
+    // Same "log the raw shape so the right field can be found instead of
+    // guessed blind" approach that credits_debug.txt was for originally —
+    // the Fable-specific weekly quota is new enough (only shows for some
+    // Max-plan accounts) that its exact JSON key isn't confirmed. FindModelWindow
+    // below tries to detect it generically either way; this log is the
+    // fallback if that heuristic ever misses.
+    private static readonly string UsageDebugFile = Path.Combine(Paths.LogsDir, "usage_debug.txt");
 
     private const string KickoffScript = """
         window.__claudeUsageResult = null;
@@ -102,17 +109,65 @@ public sealed class ClaudeProvider : IUsageProvider
                 : Strings.F("provider.claude.credits.used_of", used, balance, currency);
         }
 
+        LogUsageShape(usage);
+
+        var bars = new List<UsageBar>
+        {
+            new() { Label = Strings.T("provider.claude.5h"), Percent = fiveHour, ResetAt = fiveHourReset, Qualifier = Strings.T("qualifier.5h"), ShortPrefix = Strings.T("prefix.5h") },
+            new() { Label = Strings.T("provider.weekly"), Percent = sevenDayPct, ResetAt = weeklyReset, IsPrimary = true, Qualifier = Strings.T("qualifier.weekly"), ShortPrefix = Strings.T("prefix.weekly") },
+        };
+
+        // Model-specific weekly quota (Max-plan accounts only, "Fable" model
+        // shown separately from the aggregate "All models" bar above) — not
+        // every account has this, so it's only added when actually present.
+        // See FindModelWindow for why this is a best-effort name search
+        // rather than a fixed JSON path.
+        if (FindModelWindow(usage, "fable") is { } fableWindow)
+        {
+            var fablePct = fableWindow.GetProperty("utilization").GetInt32();
+            DateTimeOffset? fableReset = fableWindow.TryGetProperty("resets_at", out var fableResetsAt) && fableResetsAt.ValueKind == JsonValueKind.String
+                ? DateTimeOffset.Parse(fableResetsAt.GetString()!).ToLocalTime()
+                : null;
+            bars.Add(new UsageBar { Label = Strings.T("provider.claude.fable"), Percent = fablePct, ResetAt = fableReset, Qualifier = Strings.T("qualifier.fable"), ShortPrefix = Strings.T("prefix.fable") });
+        }
+
         return new UsageSnapshot
         {
             ServiceName = Name,
             Ok = true,
-            Bars =
-            {
-                new UsageBar { Label = Strings.T("provider.claude.5h"), Percent = fiveHour, ResetAt = fiveHourReset, Qualifier = Strings.T("qualifier.5h") },
-                new UsageBar { Label = Strings.T("provider.weekly"), Percent = sevenDayPct, ResetAt = weeklyReset, IsPrimary = true, Qualifier = Strings.T("qualifier.weekly") },
-            },
+            Bars = bars,
             ExtraLine = creditsLine,
         };
+    }
+
+    /// <summary>
+    /// Looks for a sibling of five_hour/seven_day whose own key name
+    /// contains <paramref name="modelName"/> and has the same shape
+    /// (a "utilization" number, optionally "resets_at") — rather than a
+    /// single fixed key path. The exact field Anthropic uses for a
+    /// model-specific weekly quota (only present on some Max-plan accounts)
+    /// isn't confirmed, so this hedges across a few plausible naming
+    /// conventions (seven_day_fable, fable, weekly_fable, ...) instead of
+    /// guessing one and silently never matching on a real account. See
+    /// UsageDebugFile if this ever needs the actual key confirmed by hand.
+    /// </summary>
+    private static JsonElement? FindModelWindow(JsonElement usage, string modelName)
+    {
+        foreach (var prop in usage.EnumerateObject())
+        {
+            if (prop.Value.ValueKind != JsonValueKind.Object) continue;
+            if (!prop.Name.Contains(modelName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (prop.Value.TryGetProperty("utilization", out var util) && util.ValueKind == JsonValueKind.Number)
+            {
+                return prop.Value;
+            }
+        }
+        return null;
+    }
+
+    private static void LogUsageShape(JsonElement usage)
+    {
+        try { File.AppendAllText(UsageDebugFile, $"{DateTime.Now:O} {usage.GetRawText()}\n"); } catch { /* best effort */ }
     }
 
     /// <summary>

@@ -58,6 +58,29 @@ public partial class PopupWindow : Window
     public int OpacityPercent { get; set; } = 100;
     public int BlurPercent { get; set; } = 45;
 
+    /// <summary>Which service names to show while <see cref="CompactMode"/> is on — independent of which services are enabled/shown in the full layout. Pushed in by TrayOrchestrator from AppSettings' CompactShow* fields.</summary>
+    public HashSet<string> CompactVisibleServices { get; set; } = new();
+
+    private const double CompactColumnWidth = 190;
+
+    /// <summary>Whether the popup is currently showing its compact layout — toggled from CompactButton, not driven externally except for the initial value (see SetCompactMode).</summary>
+    public bool CompactMode => CompactButton.IsChecked == true;
+
+    /// <summary>Fires whenever the user toggles CompactButton, so TrayOrchestrator can persist the new value into AppSettings.</summary>
+    public event EventHandler? CompactModeChanged;
+
+    /// <summary>Sets the initial compact/full state from AppSettings without firing CompactModeChanged — call once before the first Render, same spirit as SetPinned.</summary>
+    public void SetCompactMode(bool compact) => CompactButton.IsChecked = compact;
+
+    // Cached so OnCompactToggled can re-run Render() with the exact same
+    // data it was last drawn with — toggling compact/full needs to rebuild
+    // ContentHost immediately without waiting for the next refresh tick or
+    // requiring TrayOrchestrator to know the toggle happened.
+    private List<UsageSnapshot> _lastSnapshots = new();
+    private bool _lastHasAnyEnabled;
+    private DateTime? _lastUpdatedAt;
+    private int _lastTotalEnabled;
+
     // The lowest the window's BOTTOM edge is ever allowed to sit — set once
     // when the panel first appears (Top + Height at that moment). As more
     // services' data streams in and the content grows taller, the window
@@ -124,55 +147,72 @@ public partial class PopupWindow : Window
         var styleChanged = _lastRenderedStyleMode is { } lastStyle && lastStyle != StyleMode;
         _lastRenderedStyleMode = StyleMode;
 
+        var list = snapshots.ToList();
+        _lastSnapshots = list;
+        _lastHasAnyEnabled = hasAnyEnabled;
+        _lastUpdatedAt = lastUpdated;
+        _lastTotalEnabled = totalEnabled;
+
         ApplyThemeColors();
 
         StatsButton.ToolTip = Strings.T("popup.tooltip.stats");
         CloseButton.ToolTip = Strings.T("popup.tooltip.close");
         PinButton.ToolTip = Strings.T("popup.tooltip.pin");
+        CompactButton.ToolTip = CompactMode ? Strings.T("popup.tooltip.compact.full") : Strings.T("popup.tooltip.compact");
 
         ContentHost.Children.Clear();
         _animatedBars.Clear();
+        // Compact mode's whole point is a smaller footprint — the full
+        // layout's 20px margin is generous by comparison, so it gets its
+        // own, tighter value instead of inheriting the same Margin.
+        ContentHost.Margin = new Thickness(CompactMode ? 12 : 20);
 
-        var list = snapshots.ToList();
-        _barWidth = SingleColumnWidth;
-        var contentWidth = SingleColumnWidth;
-
-        if (!hasAnyEnabled)
+        if (CompactMode)
         {
-            var msg = BuildEmptyMessage(Strings.T("popup.noservices"));
-            msg.Width = contentWidth;
-            ContentHost.Children.Add(msg);
-        }
-        else if (list.Count == 0)
-        {
-            // Nothing has come back at all yet — there's no service block
-            // on screen to give the panel any context, so this is the one
-            // state that needs its own "yes, this is [app name] and it's
-            // working on it" identity, not just a bare spinner.
-            var loading = BuildLoadingState(contentWidth);
-            ContentHost.Children.Add(loading);
+            RenderCompact(list, hasAnyEnabled);
         }
         else
         {
-            var column = new StackPanel { Width = contentWidth };
-            if (list.Count < totalEnabled)
-            {
-                // Some services already have real data — from here on a
-                // real ready/total progress bar is more honest than a
-                // generic spinner, since we now actually know how far along
-                // the batch is.
-                column.Children.Add(BuildLoadingMoreIndicator(contentWidth, list.Count, totalEnabled));
-            }
-            foreach (var snap in list)
-            {
-                column.Children.Add(BuildServiceBlock(snap));
-            }
-            ContentHost.Children.Add(column);
-        }
+            _barWidth = SingleColumnWidth;
+            var contentWidth = SingleColumnWidth;
 
-        var footer = BuildFooter(lastUpdated);
-        footer.Width = contentWidth;
-        ContentHost.Children.Add(footer);
+            if (!hasAnyEnabled)
+            {
+                var msg = BuildEmptyMessage(Strings.T("popup.noservices"));
+                msg.Width = contentWidth;
+                ContentHost.Children.Add(msg);
+            }
+            else if (list.Count == 0)
+            {
+                // Nothing has come back at all yet — there's no service block
+                // on screen to give the panel any context, so this is the one
+                // state that needs its own "yes, this is [app name] and it's
+                // working on it" identity, not just a bare spinner.
+                var loading = BuildLoadingState(contentWidth);
+                ContentHost.Children.Add(loading);
+            }
+            else
+            {
+                var column = new StackPanel { Width = contentWidth };
+                if (list.Count < totalEnabled)
+                {
+                    // Some services already have real data — from here on a
+                    // real ready/total progress bar is more honest than a
+                    // generic spinner, since we now actually know how far along
+                    // the batch is.
+                    column.Children.Add(BuildLoadingMoreIndicator(contentWidth, list.Count, totalEnabled));
+                }
+                foreach (var snap in list)
+                {
+                    column.Children.Add(BuildServiceBlock(snap));
+                }
+                ContentHost.Children.Add(column);
+            }
+
+            var footer = BuildFooter(lastUpdated);
+            footer.Width = contentWidth;
+            ContentHost.Children.Add(footer);
+        }
 
         // Play right here, not just from ShowNearCursor: RefreshAllAsync
         // calls Render() again on an already-open popup as fresh data
@@ -300,6 +340,25 @@ public partial class PopupWindow : Window
         UpdatePinGlyphColor();
         UpdateStatsGlyphColor();
         UpdateCloseGlyphColor();
+        UpdateCompactGlyph();
+    }
+
+    // Material Symbols Outlined, 24dp — path data as published at
+    // fonts.gstatic.com/s/i/short-term/release/materialsymbolsoutlined/{name}/default/24px.svg.
+    private static readonly Geometry CollapseContentGeometry = Geometry.Parse("M440-440v240h-80v-160H200v-80h240Zm160-320v160h160v80H520v-240h80Z");
+    private static readonly Geometry ExpandContentGeometry = Geometry.Parse("M200-200v-240h80v160h160v80H200Zm480-320v-160H520v-80h240v240h-80Z");
+
+    /// <summary>Collapse icon while showing the full layout (clicking it compacts), expand icon while compact (clicking it goes back to full).</summary>
+    private void UpdateCompactGlyph()
+    {
+        CompactButton.ApplyTemplate();
+        if (CompactButton.Template.FindName("CompactIconPath", CompactButton) is not Path path) return;
+        path.Data = CompactMode ? ExpandContentGeometry : CollapseContentGeometry;
+        // _textPrimary, not _textSecondary — the muted secondary gray this
+        // used before was too low-contrast at 15px to actually read as an
+        // icon. Black on light / white on dark, same as the panel's own
+        // primary text.
+        path.Fill = _textPrimary;
     }
 
     private void UpdatePinGlyphColor()
@@ -344,6 +403,18 @@ public partial class PopupWindow : Window
         CloseButton.Visibility = PinButton.IsChecked == true ? Visibility.Visible : Visibility.Hidden;
     }
 
+    /// <summary>
+    /// Re-runs Render() against the last-seen data so the layout swaps
+    /// immediately, then notifies TrayOrchestrator to persist the new value
+    /// — the toggle itself is the source of truth, not something driven by
+    /// an external setting the way Pin isn't either.
+    /// </summary>
+    private void OnCompactToggled(object sender, RoutedEventArgs e)
+    {
+        Render(_lastSnapshots, _lastHasAnyEnabled, _lastUpdatedAt, _lastTotalEnabled);
+        CompactModeChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private void OnStatsClick(object sender, RoutedEventArgs e) => StatsRequested?.Invoke(this, EventArgs.Empty);
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => CloseRequested?.Invoke(this, EventArgs.Empty);
@@ -378,6 +449,139 @@ public partial class PopupWindow : Window
             // gesture (e.g. a stray call while the button's already up) —
             // harmless, just skip the drag.
         }
+    }
+
+    /// <summary>
+    /// The compact layout: one slim row per service in CompactVisibleServices
+    /// (icon + percent + a single thin bar, no labels/reset countdowns/extra
+    /// lines), plus the same footer as the full layout so Refresh/Settings
+    /// stay reachable. Narrower than SingleColumnWidth on top of being
+    /// shorter — the whole point is footprint, not just height.
+    /// </summary>
+    private void RenderCompact(List<UsageSnapshot> list, bool hasAnyEnabled)
+    {
+        _barWidth = CompactColumnWidth;
+        var contentWidth = CompactColumnWidth;
+
+        var visible = list.Where(s => CompactVisibleServices.Contains(s.ServiceName)).ToList();
+
+        if (!hasAnyEnabled)
+        {
+            var msg = BuildEmptyMessage(Strings.T("popup.noservices"));
+            msg.Width = contentWidth;
+            ContentHost.Children.Add(msg);
+        }
+        else if (visible.Count == 0)
+        {
+            // Distinct from "no services enabled at all" — these ARE
+            // enabled and have data, just none of them happen to be in the
+            // compact-visible set (or nothing's arrived yet yet for those
+            // that are), which needs its own message pointing at Settings
+            // rather than the generic "no active services" one.
+            var msg = BuildEmptyMessage(Strings.T("popup.compact.none"));
+            msg.Width = contentWidth;
+            ContentHost.Children.Add(msg);
+        }
+        else
+        {
+            var column = new StackPanel { Width = contentWidth };
+            foreach (var snap in visible)
+            {
+                column.Children.Add(BuildCompactServiceRow(snap));
+            }
+            ContentHost.Children.Add(column);
+        }
+
+        var footer = BuildFooter(_lastUpdatedAt);
+        footer.Width = contentWidth;
+        ContentHost.Children.Add(footer);
+    }
+
+    private FrameworkElement BuildCompactServiceRow(UsageSnapshot snap)
+    {
+        var block = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+        var multiBar = snap.Bars.Count > 1;
+
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var icon = ServiceIcons.Build(snap.ServiceName, 14, _textPrimary);
+        icon.Margin = new Thickness(0, 0, 6, 0);
+        icon.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(icon, 0);
+
+        var name = new TextBlock { Text = snap.ServiceName, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Foreground = _textPrimary };
+        Grid.SetColumn(name, 1);
+
+        header.Children.Add(icon);
+        header.Children.Add(name);
+
+        if (!snap.Ok)
+        {
+            var errPct = new TextBlock { Text = "—", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Foreground = _textSecondary };
+            Grid.SetColumn(errPct, 2);
+            header.Children.Add(errPct);
+            block.Children.Add(header);
+            return block;
+        }
+
+        // A single bar keeps the percent right on the header row (tightest
+        // possible, one line of chrome). More than one bar — Claude's
+        // 5-hour + weekly, say — moves each bar's percent onto its own row
+        // instead, since there's no longer one obvious "the" percent to put
+        // up there, and prefixes each with its ShortPrefix ("S:", "5H:") so
+        // they're still distinguishable without the full label text.
+        if (!multiBar)
+        {
+            var only = snap.Bars.FirstOrDefault();
+            var pct = new TextBlock { Text = only is { } b0 ? $"{b0.Percent}%" : "—", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Foreground = _textPrimary };
+            Grid.SetColumn(pct, 2);
+            header.Children.Add(pct);
+            block.Children.Add(header);
+
+            if (only is { } bar)
+            {
+                var barGrid = BuildProgressBar($"{snap.ServiceName}|compact", bar.Percent);
+                barGrid.Margin = new Thickness(0, 4, 0, 0);
+                block.Children.Add(barGrid);
+            }
+        }
+        else
+        {
+            block.Children.Add(header);
+
+            const double prefixColumnWidth = 22;
+            const double percentColumnWidth = 30;
+            var multiBarWidth = CompactColumnWidth - prefixColumnWidth - percentColumnWidth;
+
+            foreach (var bar in snap.Bars)
+            {
+                var row = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(prefixColumnWidth) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(percentColumnWidth) });
+
+                var prefix = new TextBlock { Text = bar.ShortPrefix, FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = _textSecondary };
+                Grid.SetColumn(prefix, 0);
+
+                var barGrid = BuildProgressBar($"{snap.ServiceName}|compact|{bar.Label}", bar.Percent, multiBarWidth);
+                barGrid.Margin = new Thickness(0);
+                barGrid.VerticalAlignment = VerticalAlignment.Center;
+                Grid.SetColumn(barGrid, 1);
+
+                var pct = new TextBlock { Text = $"{bar.Percent}%", FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Foreground = _textPrimary };
+                Grid.SetColumn(pct, 2);
+
+                row.Children.Add(prefix);
+                row.Children.Add(barGrid);
+                row.Children.Add(pct);
+                block.Children.Add(row);
+            }
+        }
+
+        return block;
     }
 
     private FrameworkElement BuildServiceBlock(UsageSnapshot snap)
@@ -462,7 +666,15 @@ public partial class PopupWindow : Window
         return stack;
     }
 
-    private Grid BuildProgressBar(string barKey, int percent)
+    /// <summary>
+    /// <paramref name="width"/> defaults to the current <see cref="_barWidth"/>
+    /// (the column's full content width) — pass an explicit narrower value
+    /// when the bar shares its row with other elements (the compact
+    /// layout's prefix label and percent, e.g.), since otherwise the fill's
+    /// target width would be computed against the wrong (too wide) total
+    /// and visibly overflow its own track.
+    /// </summary>
+    private Grid BuildProgressBar(string barKey, int percent, double? width = null)
     {
         const double height = 9;
         var grid = new Grid { Height = height, Margin = new Thickness(0, 6, 0, 0) };
@@ -484,7 +696,7 @@ public partial class PopupWindow : Window
         grid.Children.Add(track);
         grid.Children.Add(fill);
 
-        var targetWidth = Math.Clamp(percent, 0, 100) / 100.0 * _barWidth;
+        var targetWidth = Math.Clamp(percent, 0, 100) / 100.0 * (width ?? _barWidth);
         var alreadyShownAtThisValue = _lastBarPercents.TryGetValue(barKey, out var prevPercent) && prevPercent == percent;
         _lastBarPercents[barKey] = percent;
 

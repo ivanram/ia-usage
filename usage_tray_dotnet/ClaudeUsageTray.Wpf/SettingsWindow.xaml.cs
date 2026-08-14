@@ -53,6 +53,9 @@ public partial class SettingsWindow : Window
     private ToggleButton _showClaude = null!;
     private ToggleButton _showChatGpt = null!;
     private ToggleButton _showGrok = null!;
+    private ToggleButton _compactShowClaude = null!;
+    private ToggleButton _compactShowChatGpt = null!;
+    private ToggleButton _compactShowGrok = null!;
     private ToggleButton _notifyResetClaude = null!;
     private ToggleButton _notifyResetChatGpt = null!;
     private ToggleButton _notifyResetGrok = null!;
@@ -555,6 +558,15 @@ public partial class SettingsWindow : Window
         stack.Children.Add(BuildServiceRow("Grok", Result.ShowGrok, Result.NotifyResetGrok, out _showGrok, out _notifyResetGrok));
         stack.Children.Add(new Border { Height = 22 });
 
+        stack.Children.Add(new TextBlock { Text = Strings.T("service.compact.title"), FontSize = BodySize, FontWeight = FontWeights.Medium, Margin = new Thickness(0, 0, 0, 5) });
+        stack.Children.Add(Hint(Strings.T("service.compact.hint")));
+        stack.Children.Add(BuildSwitchRow("Claude", null, Result.CompactShowClaude, out _compactShowClaude));
+        stack.Children.Add(new Border { Height = 12 });
+        stack.Children.Add(BuildSwitchRow("ChatGPT", null, Result.CompactShowChatGpt, out _compactShowChatGpt));
+        stack.Children.Add(new Border { Height = 12 });
+        stack.Children.Add(BuildSwitchRow("Grok", null, Result.CompactShowGrok, out _compactShowGrok));
+        stack.Children.Add(new Border { Height = 22 });
+
         stack.Children.Add(BuildSwitchRow(Strings.T("service.sound.label"), Strings.T("service.sound.hint"), Result.NotifySoundEnabled, out _notifySound));
         UpdateSoundToggleAvailability();
         foreach (var t in new[] { _notifyResetClaude, _notifyResetChatGpt, _notifyResetGrok })
@@ -737,6 +749,12 @@ public partial class SettingsWindow : Window
             ShowClaude = _showClaude.IsChecked == true,
             ShowChatGpt = _showChatGpt.IsChecked == true,
             ShowGrok = _showGrok.IsChecked == true,
+            CompactShowClaude = _compactShowClaude.IsChecked == true,
+            CompactShowChatGpt = _compactShowChatGpt.IsChecked == true,
+            CompactShowGrok = _compactShowGrok.IsChecked == true,
+            // Not surfaced in the UI — toggled directly from the popup's own
+            // compact/full button, see TrayOrchestrator's CompactModeChanged.
+            PopupCompactMode = Result.PopupCompactMode,
             NotifyResetClaude = _notifyResetClaude.IsChecked == true,
             NotifyResetChatGpt = _notifyResetChatGpt.IsChecked == true,
             NotifyResetGrok = _notifyResetGrok.IsChecked == true,

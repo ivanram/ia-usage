@@ -51,7 +51,7 @@
                 -->
                 <Button x:Name="StatsButton" Width="26" Height="26"
                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,8,40,0" Cursor="Hand"
+                        Margin="0,8,72,0" Cursor="Hand"
                         Click="OnStatsClick">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -80,7 +80,7 @@
                 -->
                 <Button x:Name="CloseButton" Width="26" Height="26"
                         HorizontalAlignment="Right" VerticalAlignment="Top"
-                        Margin="0,8,72,0" Cursor="Hand" Visibility="Hidden"
+                        Margin="0,8,104,0" Cursor="Hand" Visibility="Hidden"
                         Click="OnCloseClick">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -122,6 +122,48 @@
                                             <RotateTransform Angle="-40" CenterX="7" CenterY="7" />
                                         </Setter.Value>
                                     </Setter>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </ToggleButton.Template>
+                </ToggleButton>
+
+                <!--
+                Real Material Symbols glyphs (collapse_content / expand_content
+                — path data fetched from fonts.gstatic.com), drawn as a Path
+                rather than a font codepoint so it recolors per-theme exactly
+                like StatsButton's bars. Which geometry is showing and its
+                fill are both set in code (see UpdateCompactGlyph) since a
+                plain XAML trigger can't swap Path.Data between two
+                Geometry-typed values as cleanly as just setting it directly.
+                -->
+                <ToggleButton x:Name="CompactButton" Width="26" Height="26"
+                              HorizontalAlignment="Right" VerticalAlignment="Top"
+                              Margin="0,8,40,0" Cursor="Hand"
+                              Checked="OnCompactToggled" Unchecked="OnCompactToggled">
+                    <ToggleButton.Template>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Border x:Name="CompactBg" CornerRadius="13" Background="Transparent">
+                                <!--
+                                Material Symbols path data lives in a 0..960 /
+                                -960..0 coordinate space (icon drawn "hanging"
+                                above y=0), not 0..24 — Stretch="None" (a
+                                Path's default) draws it at those native
+                                coordinates verbatim, which sits entirely
+                                outside this 15x15 box and never gets painted.
+                                Stretch="Uniform" directly on the Path itself
+                                is what actually normalizes it into its own
+                                render bounds; the Viewbox on top of that is
+                                just the usual size-to-pixels step.
+                                -->
+                                <Viewbox Width="15" Height="15" Stretch="Uniform"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Path x:Name="CompactIconPath" Stretch="Uniform" />
+                                </Viewbox>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="CompactBg" Property="Background" Value="#14808080" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>

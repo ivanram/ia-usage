@@ -15,6 +15,12 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.2",
+        [
+            "Nuevo modo compacto para el panel: un botón alterna entre la vista completa y una versión reducida con solo lo esencial (icono, % y una barra fina por servicio). Qué servicios se muestran en modo compacto se elige aparte, en Ajustes → Servicios — Claude activado por defecto. Si un servicio tiene varias barras (el límite de 5 horas y el semanal de Claude, por ejemplo), en compacto se apilan juntas con un prefijo corto (S:, 5H:).",
+            "Si tu cuenta de Claude tiene un límite semanal aparte para el modelo Fable (planes Max), ahora se muestra como una barra propia junto a las demás, tanto en la vista completa como en la compacta.",
+            "Correcciones (contraste de texto en botones con color de acento, orden de los iconos del panel).",
+        ]),
         new("2.0.1",
         [
             "Correcciones (el instalador podía dar un error de permisos al elegir instalarlo manualmente en Program Files; ahora avisa y no deja continuar con esa carpeta).",
