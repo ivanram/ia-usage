@@ -155,8 +155,16 @@
                                 is what actually normalizes it into its own
                                 render bounds; the Viewbox on top of that is
                                 just the usual size-to-pixels step.
+
+                                Sized smaller than StatsButton/PinButton's own
+                                boxes (14x12 / 12pt) on purpose, not matched to
+                                them: this is a solid Material Symbols glyph
+                                that fills its box edge-to-edge, unlike the
+                                thin bar rectangles or the pin emoji's own
+                                internal whitespace — left at the same box size
+                                it visibly outweighed both of them.
                                 -->
-                                <Viewbox Width="15" Height="15" Stretch="Uniform"
+                                <Viewbox Width="12" Height="12" Stretch="Uniform"
                                          HorizontalAlignment="Center" VerticalAlignment="Center">
                                     <Path x:Name="CompactIconPath" Stretch="Uniform" />
                                 </Viewbox>

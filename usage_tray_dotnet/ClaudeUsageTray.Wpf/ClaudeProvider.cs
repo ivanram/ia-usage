@@ -13,10 +13,9 @@ public sealed class ClaudeProvider : IUsageProvider
     private static readonly string CreditsDebugFile = Path.Combine(Paths.LogsDir, "credits_debug.txt");
     // Same "log the raw shape so the right field can be found instead of
     // guessed blind" approach that credits_debug.txt was for originally —
-    // the Fable-specific weekly quota is new enough (only shows for some
-    // Max-plan accounts) that its exact JSON key isn't confirmed. FindModelWindow
-    // below tries to detect it generically either way; this log is the
-    // fallback if that heuristic ever misses.
+    // this is what confirmed the real shape of the Fable-specific weekly
+    // quota (see FindModelLimit) after the first guess at it missed. Left
+    // in place as a general diagnostic for whatever's next.
     private static readonly string UsageDebugFile = Path.Combine(Paths.LogsDir, "usage_debug.txt");
 
     private const string KickoffScript = """
@@ -120,15 +119,16 @@ public sealed class ClaudeProvider : IUsageProvider
         // Model-specific weekly quota (Max-plan accounts only, "Fable" model
         // shown separately from the aggregate "All models" bar above) — not
         // every account has this, so it's only added when actually present.
-        // See FindModelWindow for why this is a best-effort name search
-        // rather than a fixed JSON path.
-        if (FindModelWindow(usage, "fable") is { } fableWindow)
+        // Confirmed via usage_debug.txt (see FindModelLimit): it does NOT
+        // live as a sibling key of five_hour/seven_day like the first cut of
+        // this feature assumed — every one of those top-level keys is an
+        // opaque codename (nimbus_quill, cinder_cove, ...) that doesn't
+        // reveal which model it's for. The real per-model entry is inside
+        // usage.limits[], shaped like {"kind":"weekly_scoped", "percent":5,
+        // "resets_at":"...", "scope":{"model":{"display_name":"Fable"}}}.
+        if (FindModelLimit(usage, "fable") is { } fable)
         {
-            var fablePct = fableWindow.GetProperty("utilization").GetInt32();
-            DateTimeOffset? fableReset = fableWindow.TryGetProperty("resets_at", out var fableResetsAt) && fableResetsAt.ValueKind == JsonValueKind.String
-                ? DateTimeOffset.Parse(fableResetsAt.GetString()!).ToLocalTime()
-                : null;
-            bars.Add(new UsageBar { Label = Strings.T("provider.claude.fable"), Percent = fablePct, ResetAt = fableReset, Qualifier = Strings.T("qualifier.fable"), ShortPrefix = Strings.T("prefix.fable") });
+            bars.Add(new UsageBar { Label = Strings.T("provider.claude.fable"), Percent = fable.percent, ResetAt = fable.reset, Qualifier = Strings.T("qualifier.fable"), ShortPrefix = Strings.T("prefix.fable") });
         }
 
         return new UsageSnapshot
@@ -141,26 +141,32 @@ public sealed class ClaudeProvider : IUsageProvider
     }
 
     /// <summary>
-    /// Looks for a sibling of five_hour/seven_day whose own key name
-    /// contains <paramref name="modelName"/> and has the same shape
-    /// (a "utilization" number, optionally "resets_at") — rather than a
-    /// single fixed key path. The exact field Anthropic uses for a
-    /// model-specific weekly quota (only present on some Max-plan accounts)
-    /// isn't confirmed, so this hedges across a few plausible naming
-    /// conventions (seven_day_fable, fable, weekly_fable, ...) instead of
-    /// guessing one and silently never matching on a real account. See
-    /// UsageDebugFile if this ever needs the actual key confirmed by hand.
+    /// Scans usage.limits[] for the entry scoped to a specific model (e.g.
+    /// {"kind":"weekly_scoped","percent":5,"resets_at":"...",
+    /// "scope":{"model":{"display_name":"Fable"}}}) — that's where Anthropic
+    /// actually puts a model-specific quota, NOT as a sibling key of
+    /// five_hour/seven_day the way an earlier version of this guessed
+    /// (every one of those top-level keys turned out to be an opaque
+    /// codename that says nothing about which model it's for). Matches on
+    /// scope.model.display_name rather than "kind" or array position, since
+    /// those look more likely to vary across accounts/plans than the
+    /// human-readable model name does.
     /// </summary>
-    private static JsonElement? FindModelWindow(JsonElement usage, string modelName)
+    private static (int percent, DateTimeOffset? reset)? FindModelLimit(JsonElement usage, string modelName)
     {
-        foreach (var prop in usage.EnumerateObject())
+        if (!usage.TryGetProperty("limits", out var limits) || limits.ValueKind != JsonValueKind.Array) return null;
+        foreach (var limit in limits.EnumerateArray())
         {
-            if (prop.Value.ValueKind != JsonValueKind.Object) continue;
-            if (!prop.Name.Contains(modelName, StringComparison.OrdinalIgnoreCase)) continue;
-            if (prop.Value.TryGetProperty("utilization", out var util) && util.ValueKind == JsonValueKind.Number)
-            {
-                return prop.Value;
-            }
+            if (!limit.TryGetProperty("scope", out var scope) || scope.ValueKind != JsonValueKind.Object) continue;
+            if (!scope.TryGetProperty("model", out var model) || model.ValueKind != JsonValueKind.Object) continue;
+            if (!model.TryGetProperty("display_name", out var displayName) || displayName.ValueKind != JsonValueKind.String) continue;
+            if (!displayName.GetString()!.Contains(modelName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!limit.TryGetProperty("percent", out var percentEl) || percentEl.ValueKind != JsonValueKind.Number) continue;
+
+            DateTimeOffset? reset = limit.TryGetProperty("resets_at", out var resetsAt) && resetsAt.ValueKind == JsonValueKind.String
+                ? DateTimeOffset.Parse(resetsAt.GetString()!).ToLocalTime()
+                : null;
+            return (percentEl.GetInt32(), reset);
         }
         return null;
     }

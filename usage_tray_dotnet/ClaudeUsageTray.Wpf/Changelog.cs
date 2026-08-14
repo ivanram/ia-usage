@@ -15,6 +15,15 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.5",
+        [
+            "Los iconos del panel compacto (icono de servicio, y los de estadísticas/fijar/expandir-contraer arriba, refrescar/ajustes abajo) son un poco más pequeños, para que dejen de verse desproporcionados frente al resto del panel; el icono de expandir/contraer en concreto también se ha ajustado en modo completo, donde se veía más grande que sus vecinos.",
+            "El cambio entre vista compacta y completa ahora se anima con un fundido en vez de aparecer de golpe a mitad del redimensionado de la ventana, que es lo que se sentía como un salto brusco.",
+        ]),
+        new("2.0.4",
+        [
+            "Correcciones (la barra semanal de Fable no llegaba a mostrarse en ninguna cuenta: se buscaba en el sitio equivocado del JSON de uso; ahora se lee del campo real, confirmado con un caso real).",
+        ]),
         new("2.0.3",
         [
             "Correcciones (la actualización automática se quedaba sin hacer nada si la app estaba instalada en una carpeta que requiere permisos de administrador, como Program Files: ahora pide permisos con el aviso de Windows en ese caso, en vez de fallar en silencio).",

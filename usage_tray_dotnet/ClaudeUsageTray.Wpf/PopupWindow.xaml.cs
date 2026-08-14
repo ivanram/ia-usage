@@ -101,6 +101,9 @@ public partial class PopupWindow : Window
     // itself just changed — see Render()'s styleChanged branch.
     private PopupWindowStyle? _lastRenderedStyleMode;
 
+    // Same idea, for CompactMode — see the compactModeChanged fade-in below.
+    private bool? _lastRenderedCompactMode;
+
     public PopupWindow()
     {
         InitializeComponent();
@@ -147,6 +150,20 @@ public partial class PopupWindow : Window
         var styleChanged = _lastRenderedStyleMode is { } lastStyle && lastStyle != StyleMode;
         _lastRenderedStyleMode = StyleMode;
 
+        // Compact <-> full is a bigger jump than ordinary content growth —
+        // the window resize below is already animated, but ContentHost
+        // itself is torn down and rebuilt at its final size synchronously,
+        // in the same frame, before that resize animation even starts. For
+        // a few frames the window is still mid-resize while the new
+        // (already fully-built, centered) content peeks out from behind its
+        // own hard edge — which is what reads as a "pop"/jump rather than a
+        // smooth grow/shrink, especially compact-with-one-service to full's
+        // much taller layout. Fading ContentHost in over the same span
+        // covers that seam instead of trying to chase it with more resize
+        // tuning.
+        var compactModeChanged = _lastRenderedCompactMode is { } lastCompact && lastCompact != CompactMode;
+        _lastRenderedCompactMode = CompactMode;
+
         var list = snapshots.ToList();
         _lastSnapshots = list;
         _lastHasAnyEnabled = hasAnyEnabled;
@@ -166,6 +183,21 @@ public partial class PopupWindow : Window
         // layout's 20px margin is generous by comparison, so it gets its
         // own, tighter value instead of inheriting the same Margin.
         ContentHost.Margin = new Thickness(CompactMode ? 12 : 20);
+
+        // The top-right chrome (Stats/Pin/Compact/Close) is fixed XAML,
+        // shared between both modes rather than rebuilt per-Render like the
+        // rest of the content — so it needs its own explicit shrink here.
+        // LayoutTransform (not RenderTransform) so each button's *measured*
+        // size shrinks too: these are HorizontalAlignment="Right" with a
+        // fixed pixel Margin, which anchors the button's right edge to
+        // (container width - margin) regardless of its own width, so
+        // shrinking the width just pulls the left edge in — no margin
+        // retuning needed to keep them from drifting or overlapping.
+        var chromeScale = new ScaleTransform(CompactMode ? 0.75 : 1.0, CompactMode ? 0.75 : 1.0);
+        StatsButton.LayoutTransform = chromeScale;
+        PinButton.LayoutTransform = chromeScale;
+        CompactButton.LayoutTransform = chromeScale;
+        CloseButton.LayoutTransform = chromeScale;
 
         if (CompactMode)
         {
@@ -231,6 +263,19 @@ public partial class PopupWindow : Window
         {
             if (styleChanged) ResizeInstant();
             else AnimateToNewSize();
+
+            if (compactModeChanged)
+            {
+                ContentHost.Opacity = 0;
+                var fadeIn = new DoubleAnimation
+                {
+                    From = 0,
+                    To = 1,
+                    Duration = TimeSpan.FromMilliseconds(180),
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                };
+                ContentHost.BeginAnimation(OpacityProperty, fadeIn);
+            }
         }
     }
 
@@ -507,7 +552,7 @@ public partial class PopupWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var icon = ServiceIcons.Build(snap.ServiceName, 14, _textPrimary);
+        var icon = ServiceIcons.Build(snap.ServiceName, 10.5, _textPrimary);
         icon.Margin = new Thickness(0, 0, 6, 0);
         icon.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(icon, 0);
@@ -876,11 +921,16 @@ public partial class PopupWindow : Window
 
     private (Button Button, TextBlock Glyph) BuildIconButtonWithGlyph(string glyph, string tooltip, Action onClick)
     {
+        // Rebuilt fresh every Render() (unlike the top-right chrome buttons,
+        // which are fixed XAML and get a LayoutTransform instead), so
+        // compact mode's 75% shrink can just go straight into the sizes
+        // instead of needing a transform here.
+        var scale = CompactMode ? 0.75 : 1.0;
         var icon = new TextBlock
         {
             Text = glyph,
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 14,
+            FontSize = 14 * scale,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = _textSecondary,
@@ -888,8 +938,8 @@ public partial class PopupWindow : Window
         var button = new Button
         {
             Content = icon,
-            Width = 30,
-            Height = 30,
+            Width = 30 * scale,
+            Height = 30 * scale,
             Padding = new Thickness(0),
             Margin = new Thickness(4, 0, 0, 0),
             ToolTip = tooltip,
