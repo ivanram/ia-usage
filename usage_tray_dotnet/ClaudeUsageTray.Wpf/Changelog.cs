@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.3",
+        [
+            "Correcciones (la actualización automática se quedaba sin hacer nada si la app estaba instalada en una carpeta que requiere permisos de administrador, como Program Files: ahora pide permisos con el aviso de Windows en ese caso, en vez de fallar en silencio).",
+        ]),
         new("2.0.2",
         [
             "Nuevo modo compacto para el panel: un botón alterna entre la vista completa y una versión reducida con solo lo esencial (icono, % y una barra fina por servicio). Qué servicios se muestran en modo compacto se elige aparte, en Ajustes → Servicios — Claude activado por defecto. Si un servicio tiene varias barras (el límite de 5 horas y el semanal de Claude, por ejemplo), en compacto se apilan juntas con un prefijo corto (S:, 5H:).",

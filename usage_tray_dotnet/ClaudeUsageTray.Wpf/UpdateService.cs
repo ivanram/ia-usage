@@ -27,6 +27,12 @@ internal static class UpdateService
     private const string RepoApiUrl = "https://api.github.com/repos/ivanram/ia-usage/releases/latest";
     private const string ApplyUpdateArg = "--apply-update";
 
+    // Only ever appended to an --apply-update relaunch (see the
+    // UnauthorizedAccessException branch below) — marks "this copy of the
+    // updater is already running elevated", so it doesn't loop back into
+    // asking for elevation again if something else goes wrong afterward.
+    private const string ElevatedArg = "--elevated";
+
     private static readonly string DebugFile = Path.Combine(Paths.LogsDir, "update_debug.txt");
     private static void Log(string msg)
     {
@@ -51,6 +57,7 @@ internal static class UpdateService
             Log($"apply-update: bad pid arg '{args[2]}'");
             return true;
         }
+        var alreadyElevated = args.Length > 3 && args[3] == ElevatedArg;
 
         Log($"apply-update: waiting for pid {oldPid} to exit, target={targetPath}");
         WaitForProcessExit(oldPid, TimeSpan.FromSeconds(15));
@@ -61,15 +68,48 @@ internal static class UpdateService
             CopyWithRetry(selfPath, targetPath);
             Log("apply-update: copy done, relaunching target");
             Process.Start(new ProcessStartInfo(targetPath) { UseShellExecute = true });
+            ScheduleSelfDelete(selfPath);
+        }
+        catch (UnauthorizedAccessException ex) when (!alreadyElevated)
+        {
+            // Someone installed (or the pre-2.0.1 installer put) the app
+            // somewhere only an admin can write to, e.g. Program Files — a
+            // plain user-rights File.Copy can't overwrite it. Relaunch this
+            // same temp updater with a UAC prompt instead of just giving up;
+            // if the user grants it, that elevated instance re-enters this
+            // same method (with ElevatedArg set, so it can't loop back here
+            // again) and finishes the copy with the rights it needs.
+            Log($"apply-update: access denied, requesting elevation: {ex.Message}");
+            try
+            {
+                Process.Start(new ProcessStartInfo(selfPath)
+                {
+                    Arguments = $"{ApplyUpdateArg} \"{targetPath}\" {oldPid} {ElevatedArg}",
+                    UseShellExecute = true,
+                    Verb = "runas",
+                });
+                // The elevated child owns selfPath and targetPath from here
+                // (copy, relaunch, self-delete) — this instance must not
+                // touch either, so it just steps aside.
+            }
+            catch (Exception elevateEx)
+            {
+                // UAC prompt was cancelled, or elevation itself failed.
+                // Best effort: leave the old build runnable rather than
+                // stranding the user with nothing open at all.
+                Log($"apply-update: elevation request failed/cancelled: {elevateEx}");
+                try { Process.Start(new ProcessStartInfo(targetPath) { UseShellExecute = true }); } catch { /* nothing more we can do */ }
+                ScheduleSelfDelete(selfPath);
+            }
         }
         catch (Exception ex)
         {
             Log($"apply-update: failed: {ex}");
             // Best effort: if we couldn't replace it, at least leave the old build runnable.
             try { Process.Start(new ProcessStartInfo(targetPath) { UseShellExecute = true }); } catch { /* nothing more we can do */ }
+            ScheduleSelfDelete(selfPath);
         }
 
-        ScheduleSelfDelete(selfPath);
         return true;
     }
 
