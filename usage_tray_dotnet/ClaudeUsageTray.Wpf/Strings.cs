@@ -158,6 +158,11 @@ internal static class Strings
         ["dialog.toosoon.message"] = "Ya se ha comprobado hace un momento. Inténtalo de nuevo en unos segundos.",
         ["dialog.uptodate.message"] = "Ya tienes la última versión.",
 
+        ["error.startup.body"] = "No se ha podido iniciar la aplicación.",
+        ["error.runtime.body"] = "Ha ocurrido un error inesperado. La aplicación seguirá abierta, pero algo puede no haber funcionado bien.",
+        ["error.logpath"] = "Detalles guardados en:\n{0}",
+        ["startup.folder.readonly.body"] = "Esta carpeta no tiene permisos de escritura para tu usuario:\n{0}\n\nEsto va a impedir que la aplicación se actualice sola (y puede afectar a otras funciones, como el registro de estadísticas). Mueve la aplicación a otra carpeta — por ejemplo, reinstalándola con el instalador en su carpeta por defecto — o ejecútala como administrador.",
+
         ["time.available"] = "ya disponible",
         ["time.ago.moment"] = "hace un momento",
         ["time.ago.seconds"] = "hace unos segundos",
@@ -338,6 +343,11 @@ internal static class Strings
         ["dialog.ratelimited.message"] = "GitHub is temporarily rate-limiting update checks. Try again in a little while.",
         ["dialog.toosoon.message"] = "Already checked a moment ago. Try again in a few seconds.",
         ["dialog.uptodate.message"] = "You're already on the latest version.",
+
+        ["error.startup.body"] = "The application couldn't start.",
+        ["error.runtime.body"] = "An unexpected error occurred. The application will keep running, but something may not have worked correctly.",
+        ["error.logpath"] = "Details saved to:\n{0}",
+        ["startup.folder.readonly.body"] = "This folder isn't writable by your user account:\n{0}\n\nThis will prevent the app from updating itself (and may affect other features, like stats logging). Move the app to another folder — for example, by reinstalling it with the installer into its default folder — or run it as administrator.",
 
         ["time.available"] = "available now",
         ["time.ago.moment"] = "just now",

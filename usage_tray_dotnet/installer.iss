@@ -3,8 +3,11 @@
 ; whole point: a folder the user already owns by default, so the diagnostic
 ; log and the app's own in-place self-update (UpdateService.CopyWithRetry)
 ; both keep working without ever needing admin rights. Program Files is
-; still reachable if the user insists (see NextButtonClick below), but only
-; after being warned it means a UAC prompt now and on every future update.
+; blocked outright (see NextButtonClick below) — no elevate-and-install-
+; anyway escape hatch. That used to exist, and it's exactly how a real
+; install went silently broken: the self-updater's plain-user File.Copy
+; can never overwrite an admin-owned folder, no matter how the FIRST
+; install got there.
 ;
 ; AppVersion is passed in from the build script via /DMyAppVersion=X.Y.Z
 ; so this file doesn't need hand-editing on every release.
@@ -35,9 +38,8 @@ DisableProgramGroupPage=yes
 ; Files never gets a chance to run.
 DisableDirPage=no
 ; No generic "install for all users" checkbox on purpose — that would put
-; everyone right back in an admin-only folder by default. Program Files is
-; still reachable, but only through the explicit warn-and-relaunch-elevated
-; path in NextButtonClick below, never as an easy default.
+; everyone right back in an admin-only folder by default, which is now
+; blocked outright anyway (see NextButtonClick below).
 PrivilegesRequired=lowest
 OutputBaseFilename=ClaudeUsageTraySetup
 OutputDir=..\Releases
@@ -83,13 +85,6 @@ Type: files; Name: "{app}\diagnostico_inicio.txt"
 Type: dirifempty; Name: "{app}"
 
 [Code]
-// Not exposed by Pascal Script by default; imported so the elevated-handoff
-// path (see ElevateSelfToDir) can force this process to disappear
-// immediately instead of relying on Abort, which was observed to leave the
-// original non-elevated wizard window sitting open behind the new one.
-procedure ExitProcess(uExitCode: UINT);
-external 'ExitProcess@kernel32.dll stdcall';
-
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
@@ -103,23 +98,6 @@ begin
   end;
 end;
 
-// One last dig on the Finished page if the app ended up in Program Files
-// after all — purely cosmetic, {app} is already fixed by this point.
-procedure CurPageChanged(CurPageID: Integer);
-var
-  AppDir, ProgramFiles, ProgramFilesX86: string;
-begin
-  if CurPageID = wpFinished then
-  begin
-    AppDir := Lowercase(AddBackslash(ExpandConstant('{app}')));
-    ProgramFiles := Lowercase(AddBackslash(ExpandConstant('{pf}')));
-    ProgramFilesX86 := Lowercase(AddBackslash(ExpandConstant('{pf32}')));
-    if (Pos(ProgramFiles, AppDir) = 1) or (Pos(ProgramFilesX86, AppDir) = 1) then
-      WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
-        'La app ha sido iNsTaLaDa eN pRoGrAm FiLeSSssss. Disfruta de requerir permisos de administrador cada vez, ¡pardillo!';
-  end;
-end;
-
 function InitializeUninstall(): Boolean;
 var
   ResultCode: Integer;
@@ -128,17 +106,21 @@ begin
   Result := True;
 end;
 
-// Custom two-command-link dialog instead of TaskDialogMsgBox: the built-in
-// TaskDialogMsgBox puts the UAC shield glyph on a fixed button slot with no
-// way to choose which one gets it, and it landed on the wrong ("No")
-// button. Building it by hand with TNewButton lets ElevationRequired be
-// set on the actual elevate-accepting button, matching Windows' own
-// convention (same glyph Control Panel uses for "Change settings").
-function ShowSalmeronDialog(): Boolean;
+// Single-button dialog, not a Yes/No choice — Program Files used to be
+// reachable via an elevate-and-install-anyway escape hatch (ShowSalmeronDialog
+// used to return a bool, ElevateSelfToDir did the elevated re-launch), which
+// is exactly the class of install this app can no longer support: it broke
+// silently (a real friend's self-update just stopped working, invisibly,
+// for a whole release) because the auto-updater's plain-user File.Copy can
+// never overwrite an admin-owned folder, elevated first install or not. So
+// there's no "Sí, quiero" anymore — Program Files is off the table, full
+// stop, and NextButtonClick below always rejects the page instead of
+// branching on the answer.
+procedure ShowSalmeronDialog();
 var
   Form: TSetupForm;
   MsgText: TNewStaticText;
-  YesButton, NoButton: TNewButton;
+  OkButton: TNewButton;
 begin
   Form := CreateCustomForm(ScaleX(460), ScaleY(120), False, True);
   try
@@ -152,76 +134,27 @@ begin
     MsgText.WordWrap := True;
     MsgText.Caption :=
       '¿Así que todavía estás dando por culo con esa carpeta, eh? ¿Crees que puedes derrotarme? ¡Imposible! YO SOY CLAUDIO DÉCIMO MERIDIO, comandante de los ejércitos del norte, general de las legiones félix, fiel servidor del verdadero emperador... y esa carpeta no es para ti.' + #13#10#13#10 +
-      'Si instalas aquí, Windows te va a pedir permisos de administrador ahora mismo, y te los va a volver a pedir cada vez que la aplicación se actualice sola a partir de ahora, porque esa carpeta nunca va a ser tuya.' + #13#10#13#10 +
-      '¿ES ESO LO QUE QUIERES, SALMERÓN?';
+      'Esta carpeta necesita permisos de administrador para escribir en ella, y eso rompe la actualización automática de la aplicación de forma silenciosa — así que ya no se puede elegir, ni siquiera si insistes. Elige otra carpeta (la que viene puesta por defecto funciona perfectamente sin pedirte nada).';
     MsgText.Parent := Form;
     MsgText.AdjustHeight;
 
-    YesButton := TNewButton.Create(Form);
-    YesButton.Style := bsCommandLink;
-    YesButton.ElevationRequired := not IsAdmin();
-    YesButton.Caption := 'Sí, quiero';
-    YesButton.Font.Size := MulDiv(YesButton.Font.Size, 12, 9);
-    YesButton.Left := ScaleX(10);
-    YesButton.Top := MsgText.Top + MsgText.Height + ScaleY(16);
-    YesButton.Width := Form.ClientWidth - ScaleX(20);
-    YesButton.ModalResult := mrYes;
-    YesButton.Default := True;
-    YesButton.Parent := Form;
-    YesButton.AdjustHeightIfCommandLink;
+    OkButton := TNewButton.Create(Form);
+    OkButton.Caption := 'Entendido';
+    OkButton.Left := Form.ClientWidth - ScaleX(90);
+    OkButton.Top := MsgText.Top + MsgText.Height + ScaleY(16);
+    OkButton.Width := ScaleX(80);
+    OkButton.ModalResult := mrOk;
+    OkButton.Default := True;
+    OkButton.Cancel := True;
+    OkButton.Parent := Form;
 
-    NoButton := TNewButton.Create(Form);
-    NoButton.Style := bsCommandLink;
-    NoButton.Caption := 'No, esto se me fue de las manos';
-    NoButton.Font.Size := MulDiv(NoButton.Font.Size, 12, 9);
-    NoButton.Left := ScaleX(10);
-    NoButton.Top := YesButton.Top + YesButton.Height + ScaleY(8);
-    NoButton.Width := Form.ClientWidth - ScaleX(20);
-    NoButton.ModalResult := mrNo;
-    NoButton.Cancel := True;
-    NoButton.Parent := Form;
-    NoButton.AdjustHeightIfCommandLink;
-
-    Form.ClientHeight := NoButton.Top + NoButton.Height + ScaleY(10);
+    Form.ClientHeight := OkButton.Top + OkButton.Height + ScaleY(10);
     Form.FlipAndCenterIfNeeded(True, WizardForm, False);
 
-    Result := Form.ShowModal() = mrYes;
+    Form.ShowModal();
   finally
     Form.Free();
   end;
-end;
-
-// Windows refuses to 'runas'-elevate a process's OWN currently-running exe
-// image directly (confirmed via isolated testing: elevating {srcexe} in
-// place fails, elevating an unrelated exe like notepad.exe from the exact
-// same ShellExec call works fine). The standard workaround other installers
-// use (Chrome, etc.) is to copy the exe elsewhere first and elevate THAT
-// copy instead. Inno's own CopyFile also turned out to fail specifically on
-// a self-copy of {srcexe} (confirmed: an external copy of the exact same
-// running file works fine, so it's not a Windows/AV lock) — worked around
-// here by shelling out to cmd's own "copy" instead of using CopyFile.
-function ElevateSelfToDir(const TargetDir: string): Boolean;
-var
-  CopyPath: string;
-  ExecOk: Boolean;
-  ResultCode: Integer;
-begin
-  Result := False;
-  CopyPath := ExpandConstant('{tmp}') + '\ClaudeUsageTraySetup_elevated.exe';
-  if not Exec(ExpandConstant('{cmd}'), '/c copy /Y "' + ExpandConstant('{srcexe}') + '" "' + CopyPath + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or not FileExists(CopyPath) then
-    Exit;
-  // /CLAUDEELEVATED=1 marks this as a continuation of an already-answered
-  // "install to Program Files?" prompt, so the elevated instance knows not
-  // to ask again — see the check at the top of NextButtonClick.
-  ExecOk := ShellExec('runas', CopyPath, '/DIR="' + TargetDir + '" /CLAUDEELEVATED=1', ExtractFileDir(CopyPath), SW_SHOWNORMAL, ewNoWait, ResultCode);
-  if ExecOk then
-  begin
-    Result := True;
-    WizardForm.Hide;
-    ExitProcess(0);
-  end
-  else
-    MsgBox('No se han podido conceder permisos de administrador (código de error ' + IntToStr(ResultCode) + '). Elige otra carpeta, o inténtalo de nuevo.', mbError, MB_OK);
 end;
 
 // The "Select Destination Location" page lets the user Browse... to ANY
@@ -229,20 +162,12 @@ end;
 // dialog by writability. Picking Program Files (or Program Files (x86))
 // used to sail through this page and only fail later, deep in file
 // extraction, with a bare Win32 "Access is denied" (error 5) and no
-// indication of why. Intercept it right here instead: warn what it costs,
-// and if the user still wants it, hand off to the elevated copy (see
-// ElevateSelfToDir above), which terminates this process itself once the
-// elevated one is confirmed launched.
-//
-// The /CLAUDEELEVATED=1 check matters for the relaunched instance: without
-// it, the elevated copy would hit this same page with the same
-// Program-Files path pre-filled via /DIR and ask the whole question again,
-// even though the user already answered it once in the instance that
-// launched this one.
+// indication of why. Intercept it right here instead and reject the page
+// outright — see ShowSalmeronDialog for why there's no "install anyway"
+// path left.
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   ChosenDir, ProgramFiles, ProgramFilesX86: string;
-  WantsToProceed: Boolean;
 begin
   Result := True;
   if CurPageID = wpSelectDir then
@@ -252,21 +177,8 @@ begin
     ProgramFilesX86 := Lowercase(AddBackslash(ExpandConstant('{pf32}')));
     if (Pos(ProgramFiles, ChosenDir) = 1) or (Pos(ProgramFilesX86, ChosenDir) = 1) then
     begin
-      if IsAdmin() and (ExpandConstant('{param:CLAUDEELEVATED|0}') = '1') then
-        Result := True
-      else
-      begin
-        WantsToProceed := ShowSalmeronDialog();
-        if not WantsToProceed then
-          Result := False
-        else if IsAdmin() then
-          Result := True
-        else
-        begin
-          ElevateSelfToDir(WizardDirValue());
-          Result := False;
-        end;
-      end;
+      ShowSalmeronDialog();
+      Result := False;
     end;
   end;
 end;

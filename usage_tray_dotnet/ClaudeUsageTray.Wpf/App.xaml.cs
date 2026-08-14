@@ -125,11 +125,20 @@ public partial class App : Application
                 dispatcher.Invoke(Shutdown);
             }) { IsBackground = true, Name = "ExitSignalWatcher" }.Start();
 
+            // Shown, not just logged — "the app silently does nothing and
+            // there's a log file somewhere you'd have to know to look for"
+            // is exactly the failure mode this whole block exists to kill.
+            // Kept alive (Handled = true) rather than shutting down: by the
+            // time a Dispatcher exception fires, the tray icon/popup already
+            // exist and are doing real work, so one bad event handler isn't
+            // grounds for taking all of that down too — the user just needs
+            // to know something broke, not lose the whole app over it.
             DispatcherUnhandledException += (s, ex) =>
             {
                 var text = $"{DateTime.Now:O}\nDispatcherUnhandledException:\n{ex.Exception}\n";
                 File.WriteAllText(CrashLog, text);
                 TraceStartup(text);
+                ShowErrorBox("error.runtime.body", ex.Exception);
                 ex.Handled = true;
             };
             AppDomain.CurrentDomain.UnhandledException += (s, ex) =>
@@ -137,6 +146,12 @@ public partial class App : Application
                 var text = $"{DateTime.Now:O}\nAppDomain UnhandledException:\n{ex.ExceptionObject}\n";
                 File.WriteAllText(CrashLog, text);
                 TraceStartup(text);
+                // IsTerminating is almost always true here — the process is
+                // going down regardless of anything this handler does, so
+                // this is a best-effort "at least say something before it
+                // dies" rather than a recoverable path like the Dispatcher
+                // case above.
+                if (ex.ExceptionObject is Exception realEx) ShowErrorBox("error.runtime.body", realEx);
             };
             TaskScheduler.UnobservedTaskException += (s, ex) =>
             {
@@ -152,12 +167,87 @@ public partial class App : Application
             _orchestrator.Start();
             TraceStartup("TrayOrchestrator.Start() returned — tray icon should be visible now");
             _ = UpdateService.CheckAndPromptAsync();
+            CheckInstallFolderWritable();
         }
         catch (Exception ex)
         {
             File.WriteAllText(CrashLog, $"{DateTime.Now:O}\nStartup exception:\n{ex}\n");
             TraceStartup($"FATAL during startup:\n{ex}");
+
+            // The one report this whole change exists to stop: a friend
+            // downloads/updates, double-clicks, and "nothing happens" — no
+            // window, no tray icon, no error, just a process that silently
+            // exists (holding the single-instance mutex, so even trying
+            // again does nothing) or silently doesn't. Confirmed for real:
+            // a startup exception here used to just return, leaving exactly
+            // that zombie behind. Show the actual error, then shut down
+            // cleanly so the mutex is released and the NEXT launch attempt
+            // isn't silently blocked by this one's corpse.
+            ShowErrorBox("error.startup.body", ex);
+            Shutdown();
         }
+    }
+
+    /// <summary>
+    /// Last-resort error reporting — plain Win32 MessageBox, not
+    /// AppDialogWindow's own styled dialog, on purpose: this runs from
+    /// exception handlers that may be firing BECAUSE something in WPF's own
+    /// resource/theme loading broke, so it can't risk depending on the same
+    /// MaterialDesignThemes resources that might be the thing that's
+    /// actually broken. Wrapped in its own try/catch since even this has to
+    /// stay best-effort — the trace files are always the fallback either way.
+    /// </summary>
+    private static void ShowErrorBox(string bodyKey, Exception ex)
+    {
+        try
+        {
+            var body = $"{Strings.T(bodyKey)}\n\n{ex.GetType().Name}: {ex.Message}\n\n{Strings.F("error.logpath", StartupTraceLogPrimary)}";
+            MessageBox.Show(body, Strings.T("app.name"), MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        catch { /* best effort — the trace files are still there either way */ }
+    }
+
+    /// <summary>
+    /// Self-update (UpdateService.CopyWithRetry) has to overwrite the exe
+    /// at its own path, and this diagnostic log has to write next to it —
+    /// both silently degrade (a swallowed exception, or the fallback log
+    /// location) if the install folder isn't writable, which is exactly
+    /// how a friend's "no me actualiza nunca" went unnoticed for a whole
+    /// release cycle. Runs on every launch (not just install) since a
+    /// folder's permissions can change after the fact (moved into Program
+    /// Files by hand, an admin tightened an ACL, ...), and the installer's
+    /// own Program-Files guard (installer.iss) can't see a manual copy or
+    /// a portable-exe user who dragged it there themselves. A warning, not
+    /// a hard block: the app still works for reading usage — only
+    /// self-update and local logging are what actually breaks — so this
+    /// tells the user their update will silently fail instead of quietly
+    /// leaving them on an old version indefinitely.
+    /// </summary>
+    private static void CheckInstallFolderWritable()
+    {
+        var dir = Path.GetDirectoryName(Environment.ProcessPath!) ?? AppContext.BaseDirectory;
+        var probePath = Path.Combine(dir, $".writetest_{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(probePath, "");
+            File.Delete(probePath);
+            TraceStartup($"Install folder is writable: {dir}");
+            return;
+        }
+        catch (Exception ex)
+        {
+            TraceStartup($"Install folder NOT writable: {dir}\n{ex}");
+        }
+
+        try
+        {
+            MessageBox.Show(
+                Strings.F("startup.folder.readonly.body", dir),
+                Strings.T("app.name"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch { /* best effort — TraceStartup above already recorded it */ }
     }
 
     protected override void OnExit(ExitEventArgs e)

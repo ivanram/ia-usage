@@ -73,20 +73,54 @@ public partial class AppDialogWindow : Window
         ChangelogScroll.Visibility = Visibility.Visible;
     }
 
+    /// <summary>
+    /// The raw text only ever came from OUR OWN GitHub release notes (see
+    /// UpdateService.GetLatestReleaseAsync), never arbitrary markdown, but
+    /// that first cut still leaked two kinds of it straight into the
+    /// dialog: any non-bullet line (a "## Correcciones" / "## Descargas"
+    /// heading, a blank separator) fell through untouched instead of being
+    /// dropped, and "**bold**" runs inside real bullets stayed as literal
+    /// asterisks — both read as broken markdown syntax rather than a
+    /// changelog. Now: only genuine "- " bullets survive at all, the
+    /// "## Descargas" section (asset filenames/sizes, not a change) is cut
+    /// before parsing even starts, and "**...**" markers are stripped from
+    /// whatever bullets remain.
+    /// </summary>
     private static List<string> ParseBullets(string? text)
     {
         var result = new List<string>();
         if (string.IsNullOrWhiteSpace(text)) return result;
 
-        foreach (var rawLine in text.Replace("\r\n", "\n").Split('\n'))
+        var normalized = text.Replace("\r\n", "\n");
+        var downloadsAt = IndexOfHeading(normalized, "Descargas", "Downloads");
+        if (downloadsAt >= 0) normalized = normalized[..downloadsAt];
+
+        foreach (var rawLine in normalized.Split('\n'))
         {
             var line = rawLine.Trim();
-            if (line.StartsWith("- ")) line = line[2..].Trim();
-            else if (line.StartsWith("-")) line = line[1..].Trim();
+            if (!line.StartsWith("- ")) continue;
+            line = line[2..].Trim().Replace("**", "");
             if (line.Length == 0) continue;
             result.Add(line);
         }
         return result;
+    }
+
+    /// <summary>Index of the start of a "## &lt;name&gt;" heading line (any of the given names, case-insensitive), or -1 if none is present.</summary>
+    private static int IndexOfHeading(string text, params string[] names)
+    {
+        var lines = text.Split('\n');
+        var offset = 0;
+        foreach (var rawLine in lines)
+        {
+            var trimmed = rawLine.Trim();
+            if (trimmed.StartsWith("#") && names.Any(n => trimmed.TrimStart('#').Trim().Equals(n, StringComparison.OrdinalIgnoreCase)))
+            {
+                return offset;
+            }
+            offset += rawLine.Length + 1; // +1 for the '\n' the Split already consumed
+        }
+        return -1;
     }
 
     /// <summary>Two-button Sí/No prompt. Returns true if the user picked Sí.</summary>

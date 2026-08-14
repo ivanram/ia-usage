@@ -15,6 +15,13 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.6",
+        [
+            "Corregido un fallo grave: la versión ligera (-fx) se publicaba sin una librería nativa que SQLite necesita para arrancar, así que la app podía morir en el arranque sin abrir ninguna ventana ni avisar de nada — solo quedaba un proceso invisible. Ahora ese fallo (o cualquier otro relacionado con el historial/estadísticas) ya no impide que se abra el resto de la app.",
+            "Cualquier error inesperado al arrancar, o durante el uso normal, se muestra ahora en un aviso claro en vez de fallar en silencio.",
+            "Si la carpeta donde está instalada la app no tiene permisos de escritura para tu usuario (lo que rompe la actualización automática), ahora avisa de ello al arrancar. El instalador, además, ya no deja instalar en Program Files bajo ningún concepto — antes lo permitía si insistías, pidiendo permisos de administrador, pero eso es precisamente lo que causaba el problema.",
+            "El aviso de actualización disponible mostraba a veces símbolos de markdown sin más (##, **) en vez de texto limpio; corregido.",
+        ]),
         new("2.0.5",
         [
             "Los iconos del panel compacto (icono de servicio, y los de estadísticas/fijar/expandir-contraer arriba, refrescar/ajustes abajo) son un poco más pequeños, para que dejen de verse desproporcionados frente al resto del panel; el icono de expandir/contraer en concreto también se ha ajustado en modo completo, donde se veía más grande que sus vecinos.",

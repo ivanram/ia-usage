@@ -30,23 +30,41 @@ public sealed class PromptCountStore
         Initialize();
     }
 
+    /// <summary>
+    /// Unlike every other method here, this one runs straight from the
+    /// constructor — which TrayOrchestrator's own field initializer calls
+    /// before the tray icon, popup, or menu exist. Left unguarded, a SQLite
+    /// failure here (confirmed for real: a framework-dependent build
+    /// published without the native e_sqlite3 binary bundled in) took the
+    /// entire app down before a single pixel got drawn — no window, no tray
+    /// icon, no visible error. Same try/catch-and-degrade treatment as
+    /// every sibling method (and UsageHistoryStore.Initialize, which had
+    /// the identical gap) now.
+    /// </summary>
     private void Initialize()
     {
-        using var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS prompt_counts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                recorded_at TEXT NOT NULL,
-                agent TEXT NOT NULL,
-                project TEXT NOT NULL,
-                total_count INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_prompt_counts_agent_time ON prompt_counts(agent, recorded_at);
-            CREATE INDEX IF NOT EXISTS idx_prompt_counts_agent_project_time ON prompt_counts(agent, project, recorded_at);
-            """;
-        cmd.ExecuteNonQuery();
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS prompt_counts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recorded_at TEXT NOT NULL,
+                    agent TEXT NOT NULL,
+                    project TEXT NOT NULL,
+                    total_count INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_prompt_counts_agent_time ON prompt_counts(agent, recorded_at);
+                CREATE INDEX IF NOT EXISTS idx_prompt_counts_agent_project_time ON prompt_counts(agent, project, recorded_at);
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(Paths.LogsDir, "history_store_debug.txt"), $"{DateTime.Now:O} PromptCountStore.Initialize failed, prompt counts will be unavailable this run:\n{ex}\n"); } catch { /* best effort */ }
+        }
     }
 
     public void RecordSnapshot(string agent, IReadOnlyDictionary<string, int> totalsByProject, DateTimeOffset at)

@@ -26,28 +26,48 @@ public sealed class UsageHistoryStore
         Initialize();
     }
 
+    /// <summary>
+    /// Every OTHER method in this class already treats a SQLite failure as
+    /// "history is a nice-to-have" and swallows it — this one didn't, and
+    /// it runs from the constructor, which TrayOrchestrator's own field
+    /// initializer calls before anything else (tray icon, popup, menu) gets
+    /// a chance to exist. An unhandled exception here used to take the
+    /// entire app down before a single pixel got drawn: confirmed for real
+    /// via a DllNotFoundException on e_sqlite3 (a framework-dependent build
+    /// published without the native SQLite binary bundled in) — the app
+    /// just never appeared, no window, no tray icon, no error, with the
+    /// crash sitting silently in a log file nobody was told to look at.
+    /// Same try/catch-and-degrade treatment as every sibling method now.
+    /// </summary>
     private void Initialize()
     {
-        using var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS usage_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                recorded_at TEXT NOT NULL,
-                service TEXT NOT NULL,
-                percent INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_usage_history_service_time ON usage_history(service, recorded_at);
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS usage_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recorded_at TEXT NOT NULL,
+                    service TEXT NOT NULL,
+                    percent INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_usage_history_service_time ON usage_history(service, recorded_at);
 
-            CREATE TABLE IF NOT EXISTS usage_resets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                recorded_at TEXT NOT NULL,
-                service TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_usage_resets_service_time ON usage_resets(service, recorded_at);
-            """;
-        cmd.ExecuteNonQuery();
+                CREATE TABLE IF NOT EXISTS usage_resets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recorded_at TEXT NOT NULL,
+                    service TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_usage_resets_service_time ON usage_resets(service, recorded_at);
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(Paths.LogsDir, "history_store_debug.txt"), $"{DateTime.Now:O} Initialize failed, history/stats will be unavailable this run:\n{ex}\n"); } catch { /* best effort */ }
+        }
     }
 
     /// <summary>
