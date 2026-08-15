@@ -16,12 +16,19 @@
     rectangular bounds. AllowsTransparency windows clip hard at their edge;
     without this margin the shadow's blur gets cut into a hard rectangle
     right past the rounded corners, which is exactly what read as "square
-    corners still visible" on a window that's supposedly rounded.
+    corners still visible" on a window that's supposedly rounded. Kept in
+    sync with PopupWindow.ChromeReserve in the code-behind (also set there,
+    at runtime, per theme mode) — this XAML value is just the pre-first-
+    render default. Shrunk from 18 to 6 alongside the DropShadowEffect
+    below it (which shrunk to match) so Blur mode's card — which has to
+    stretch across this whole margin to avoid an untinted seam at the
+    window edge, see ApplyThemeColors — doesn't end up visibly bigger than
+    Standard mode's.
     -->
-    <Grid x:Name="RootGrid" Margin="18">
+    <Grid x:Name="RootGrid" Margin="6">
         <Border x:Name="RootBorder" CornerRadius="16" MouseLeftButtonDown="OnRootMouseLeftButtonDown">
             <Border.Effect>
-                <DropShadowEffect BlurRadius="22" ShadowDepth="6" Direction="270" Opacity="0.22" Color="Black" />
+                <DropShadowEffect BlurRadius="10" ShadowDepth="2" Direction="270" Opacity="0.22" Color="Black" />
             </Border.Effect>
             <!--
             Centered rather than the default Stretch: RootBorder itself is

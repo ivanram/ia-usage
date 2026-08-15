@@ -182,7 +182,7 @@ public partial class PopupWindow : Window
         // Compact mode's whole point is a smaller footprint — the full
         // layout's 20px margin is generous by comparison, so it gets its
         // own, tighter value instead of inheriting the same Margin.
-        ContentHost.Margin = new Thickness(CompactMode ? 12 : 20);
+        ContentHost.Margin = new Thickness(CompactMode ? 6 : 20);
 
         // The top-right chrome (Stats/Pin/Compact/Close) is fixed XAML,
         // shared between both modes rather than rebuilt per-Render like the
@@ -345,7 +345,9 @@ public partial class PopupWindow : Window
         {
             var alpha = (byte)Math.Clamp(Math.Round(OpacityPercent / 100.0 * 255), 0, 255);
             RootBorder.Background = new SolidColorBrush(Color.FromArgb(alpha, baseColor.R, baseColor.G, baseColor.B));
-            RootGrid.Margin = new Thickness(18);
+            // Matches ChromeReserve — see that constant's doc comment for
+            // why the two have to move together.
+            RootGrid.Margin = new Thickness(ChromeReserve);
             RootBorder.Effect = _standardShadowEffect;
             if (hwnd != IntPtr.Zero) DwmHelper.DisableBlur(hwnd);
         }
@@ -545,7 +547,6 @@ public partial class PopupWindow : Window
     private FrameworkElement BuildCompactServiceRow(UsageSnapshot snap)
     {
         var block = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-        var multiBar = snap.Bars.Count > 1;
 
         var header = new Grid();
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -572,58 +573,39 @@ public partial class PopupWindow : Window
             return block;
         }
 
-        // A single bar keeps the percent right on the header row (tightest
-        // possible, one line of chrome). More than one bar — Claude's
-        // 5-hour + weekly, say — moves each bar's percent onto its own row
-        // instead, since there's no longer one obvious "the" percent to put
-        // up there, and prefixes each with its ShortPrefix ("S:", "5H:") so
-        // they're still distinguishable without the full label text.
-        if (!multiBar)
+        // Every bar of every service gets the same row — prefix, bar,
+        // percent — so a single-bar service (Grok) reads exactly as
+        // consistently as Claude's 5-hour + weekly pair instead of a
+        // different "percent up in the header" shorthand that only that
+        // one bar got.
+        block.Children.Add(header);
+
+        const double prefixColumnWidth = 22;
+        const double percentColumnWidth = 30;
+        var barWidth = CompactColumnWidth - prefixColumnWidth - percentColumnWidth;
+
+        foreach (var bar in snap.Bars)
         {
-            var only = snap.Bars.FirstOrDefault();
-            var pct = new TextBlock { Text = only is { } b0 ? $"{b0.Percent}%" : "—", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Foreground = _textPrimary };
+            var row = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(prefixColumnWidth) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(percentColumnWidth) });
+
+            var prefix = new TextBlock { Text = bar.ShortPrefix, FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = _textSecondary };
+            Grid.SetColumn(prefix, 0);
+
+            var barGrid = BuildProgressBar($"{snap.ServiceName}|compact|{bar.Label}", bar.Percent, barWidth);
+            barGrid.Margin = new Thickness(0);
+            barGrid.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(barGrid, 1);
+
+            var pct = new TextBlock { Text = $"{bar.Percent}%", FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Foreground = _textPrimary };
             Grid.SetColumn(pct, 2);
-            header.Children.Add(pct);
-            block.Children.Add(header);
 
-            if (only is { } bar)
-            {
-                var barGrid = BuildProgressBar($"{snap.ServiceName}|compact", bar.Percent);
-                barGrid.Margin = new Thickness(0, 4, 0, 0);
-                block.Children.Add(barGrid);
-            }
-        }
-        else
-        {
-            block.Children.Add(header);
-
-            const double prefixColumnWidth = 22;
-            const double percentColumnWidth = 30;
-            var multiBarWidth = CompactColumnWidth - prefixColumnWidth - percentColumnWidth;
-
-            foreach (var bar in snap.Bars)
-            {
-                var row = new Grid { Margin = new Thickness(0, 4, 0, 0) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(prefixColumnWidth) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(percentColumnWidth) });
-
-                var prefix = new TextBlock { Text = bar.ShortPrefix, FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = _textSecondary };
-                Grid.SetColumn(prefix, 0);
-
-                var barGrid = BuildProgressBar($"{snap.ServiceName}|compact|{bar.Label}", bar.Percent, multiBarWidth);
-                barGrid.Margin = new Thickness(0);
-                barGrid.VerticalAlignment = VerticalAlignment.Center;
-                Grid.SetColumn(barGrid, 1);
-
-                var pct = new TextBlock { Text = $"{bar.Percent}%", FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Foreground = _textPrimary };
-                Grid.SetColumn(pct, 2);
-
-                row.Children.Add(prefix);
-                row.Children.Add(barGrid);
-                row.Children.Add(pct);
-                block.Children.Add(row);
-            }
+            row.Children.Add(prefix);
+            row.Children.Add(barGrid);
+            row.Children.Add(pct);
+            block.Children.Add(row);
         }
 
         return block;
@@ -1267,9 +1249,17 @@ public partial class PopupWindow : Window
     /// Constant chrome reserve (DIPs, one side) added around the card's
     /// natural content size to get the window's real (HWND) size — see
     /// MeasureRealDesiredSize for why this has to be a fixed number rather
-    /// than whatever RootGrid's current Margin happens to be.
+    /// than whatever RootGrid's current Margin happens to be. Kept equal to
+    /// Standard mode's RootGrid.Margin (see ApplyThemeColors) on purpose:
+    /// Standard's card sits inset by exactly this much (tight fit around
+    /// natural content), while Blur's card stretches to fill the whole
+    /// reserve too (it has to, to avoid an untinted seam at the window
+    /// edge — see ApplyThemeColors) — so this constant is also how much
+    /// bigger than Standard's card Blur's ends up. Shrunk from 18 to 6 so
+    /// that visible mismatch reads as a rounding difference instead of an
+    /// obviously thicker border in Blur mode.
     /// </summary>
-    private const double ChromeReserve = 18;
+    private const double ChromeReserve = 6;
 
     /// <summary>
     /// Measuring the WINDOW itself (as this used to do) bakes in whatever

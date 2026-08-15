@@ -15,6 +15,15 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.8",
+        [
+            "Correcciones (el panel en modo Blur se veía notablemente más grande, con más borde alrededor del contenido, que el mismo panel en modo Estándar — ambos modos comparten ahora la misma reserva de espacio, así que el tamaño y el grosor del borde quedan prácticamente iguales entre los dos).",
+        ]),
+        new("2.0.7",
+        [
+            "El panel compacto ahora muestra el mismo prefijo corto (S:, 5H:, U:...) y porcentaje junto a cada barra para todos los servicios, no solo para Claude — antes ChatGPT y Grok se quedaban con un formato distinto, solo el porcentaje suelto. También se ha reducido a la mitad el margen entre el contenido y el borde de la ventana en este modo.",
+            "Corregido el contraste de texto en los botones con color de acento (Guardar, etc.): la fórmula de contraste real introducida en su día para elegir negro o blanco tenía un fallo — su punto de corte matemático quedaba tan bajo que, en la práctica, elegía negro para casi todos los colores del selector (morado, verde, azul...) en vez de blanco, justo lo contrario de lo que buscaba.",
+        ]),
         new("2.0.6",
         [
             "Corregido un fallo grave: la versión ligera (-fx) se publicaba sin una librería nativa que SQLite necesita para arrancar, así que la app podía morir en el arranque sin abrir ninguna ventana ni avisar de nada — solo quedaba un proceso invisible. Ahora ese fallo (o cualquier otro relacionado con el historial/estadísticas) ya no impide que se abra el resto de la app.",
