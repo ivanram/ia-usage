@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.9",
+        [
+            "El uso de Fable (planes Max/Ultra) ahora se registra como una serie propia en Estadísticas, con su propia gráfica \"Claude - Fable\" separada de la de Claude — antes se leía en el panel principal pero no se guardaba en el historial, así que Estadísticas no tenía nada que mostrar de Fable.",
+        ]),
         new("2.0.8",
         [
             "Correcciones (el panel en modo Blur se veía notablemente más grande, con más borde alrededor del contenido, que el mismo panel en modo Estándar — ambos modos comparten ahora la misma reserva de espacio, así que el tamaño y el grosor del borde quedan prácticamente iguales entre los dos).",

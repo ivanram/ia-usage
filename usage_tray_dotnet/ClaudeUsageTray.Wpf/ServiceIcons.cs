@@ -29,7 +29,7 @@ internal static class ServiceIcons
     {
         return serviceName switch
         {
-            "Claude" => new Image { Source = ClaudeIcon, Width = size, Height = size },
+            "Claude" or "Claude - Fable" => new Image { Source = ClaudeIcon, Width = size, Height = size },
             "Grok" => new Image { Source = GrokIcon, Width = size, Height = size },
             "ChatGPT" => new Viewbox
             {

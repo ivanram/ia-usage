@@ -10,6 +10,14 @@ public sealed class ClaudeProvider : IUsageProvider
     public string LoginUrl => "https://claude.ai/login";
     public string ProfileFolderName => "WebView2_Claude";
 
+    /// <summary>
+    /// History/stats service key for the Fable bar (see <see cref="UsageBar.IsFable"/>)
+    /// — a distinct series from "Claude" itself, so Fable's own weekly quota
+    /// gets its own chart in Stats instead of being folded into or
+    /// overwriting Claude's aggregate weekly history.
+    /// </summary>
+    public const string FableServiceName = "Claude - Fable";
+
     private static readonly string CreditsDebugFile = Path.Combine(Paths.LogsDir, "credits_debug.txt");
     // Same "log the raw shape so the right field can be found instead of
     // guessed blind" approach that credits_debug.txt was for originally —
@@ -128,7 +136,7 @@ public sealed class ClaudeProvider : IUsageProvider
         // "resets_at":"...", "scope":{"model":{"display_name":"Fable"}}}.
         if (FindModelLimit(usage, "fable") is { } fable)
         {
-            bars.Add(new UsageBar { Label = Strings.T("provider.claude.fable"), Percent = fable.percent, ResetAt = fable.reset, Qualifier = Strings.T("qualifier.fable"), ShortPrefix = Strings.T("prefix.fable") });
+            bars.Add(new UsageBar { Label = Strings.T("provider.claude.fable"), Percent = fable.percent, ResetAt = fable.reset, IsFable = true, Qualifier = Strings.T("qualifier.fable"), ShortPrefix = Strings.T("prefix.fable") });
         }
 
         return new UsageSnapshot

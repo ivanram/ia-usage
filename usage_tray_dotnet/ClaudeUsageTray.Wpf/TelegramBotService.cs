@@ -137,7 +137,17 @@ public sealed class TelegramBotService
                 if (normalized == "/stats" || normalized.StartsWith("/stats@"))
                 {
                     var snapshots = _getSnapshots().Where(s => s.Ok).ToList();
-                    var image = BuildStatsImage(snapshots.Select(s => s.ServiceName).ToList());
+                    var statsServiceNames = snapshots.Select(s => s.ServiceName).ToList();
+                    // Fable rides as one of Claude's own bars (see UsageBar.IsFable),
+                    // not a separate UsageSnapshot, so it needs to be appended here
+                    // rather than showing up from the snapshots loop above — same
+                    // conditional-append TrayOrchestrator.StatsServiceNames does for
+                    // the desktop Stats window.
+                    if (snapshots.Any(s => s.ServiceName == "Claude" && s.Bars.Any(b => b.IsFable)))
+                    {
+                        statsServiceNames.Add(ClaudeProvider.FableServiceName);
+                    }
+                    var image = BuildStatsImage(statsServiceNames);
                     var caption = BuildStatsCaption(snapshots);
                     if (image is null)
                     {

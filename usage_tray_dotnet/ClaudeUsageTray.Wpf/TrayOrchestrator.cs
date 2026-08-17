@@ -418,9 +418,25 @@ public sealed class TrayOrchestrator : IDisposable
             return;
         }
 
-        _statsWindow = new StatsWindow(_providers.Where(IsEnabled).Select(p => p.Name).ToList(), _historyStore, _promptCountStore, _promptScanCache, anchor);
+        _statsWindow = new StatsWindow(StatsServiceNames(), _historyStore, _promptCountStore, _promptScanCache, anchor);
         _statsWindow.Closed += (s, e) => _statsWindow = null;
         _statsWindow.Show();
+    }
+
+    /// <summary>
+    /// The enabled providers' own names, plus "Claude - Fable" appended
+    /// whenever the account actually has a Fable quota — only Max/Ultra
+    /// plans do (see ClaudeProvider.FindModelLimit), so this is conditional
+    /// rather than always-on the way the three real providers are.
+    /// </summary>
+    private List<string> StatsServiceNames()
+    {
+        var names = _providers.Where(IsEnabled).Select(p => p.Name).ToList();
+        if (_lastSnapshots.TryGetValue("Claude", out var claudeSnap) && claudeSnap.Bars.Any(b => b.IsFable))
+        {
+            names.Add(ClaudeProvider.FableServiceName);
+        }
+        return names;
     }
 
     private void ApplyTheme()
@@ -644,6 +660,8 @@ public sealed class TrayOrchestrator : IDisposable
                     CheckForReset(provider.Name, snap);
                     var primaryBar = snap.Bars.FirstOrDefault(b => b.IsPrimary);
                     if (primaryBar is not null) _historyStore.Record(provider.Name, primaryBar.Percent);
+                    var fableBar = snap.Bars.FirstOrDefault(b => b.IsFable);
+                    if (fableBar is not null) _historyStore.Record(ClaudeProvider.FableServiceName, fableBar.Percent);
                 }
                 _lastSnapshots[provider.Name] = snap;
 
@@ -722,6 +740,7 @@ public sealed class TrayOrchestrator : IDisposable
         var resetQualifiers = new List<string>();
         var exhaustedQualifiers = new List<string>();
         var weeklyResetDetected = false;
+        var fableResetDetected = false;
         var telegramExhaustedQualifiers = new List<string>();
         var telegramEightyWorthy = false;
         var stateChanged = false;
@@ -739,6 +758,11 @@ public sealed class TrayOrchestrator : IDisposable
                     // that's the whole point of logging it: some providers
                     // reset early, and this is how you'd actually notice.
                     if (bar.IsPrimary) weeklyResetDetected = true;
+                    // Fable's own weekly quota resets independently of
+                    // Claude's aggregate weekly bar, so it needs its own
+                    // reset marker on its own history series rather than
+                    // riding along with weeklyResetDetected above.
+                    if (bar.IsFable) fableResetDetected = true;
                 }
                 // Fires once on the crossing into 100%, not on every
                 // refresh that happens to still read above the line afterward.
@@ -770,6 +794,7 @@ public sealed class TrayOrchestrator : IDisposable
         }
         if (stateChanged) _notificationState.Save();
         if (weeklyResetDetected) _historyStore.RecordReset(serviceName, DateTimeOffset.UtcNow);
+        if (fableResetDetected) _historyStore.RecordReset(ClaudeProvider.FableServiceName, DateTimeOffset.UtcNow);
 
         NotifyLog($"CheckForReset [{serviceName}] result: resetDetected={resetQualifiers.Count > 0} exhaustedDetected={exhaustedQualifiers.Count > 0} weeklyResetDetected={weeklyResetDetected} telegramExhaustedWorthy={telegramExhaustedQualifiers.Count > 0} telegramEightyWorthy={telegramEightyWorthy}");
 
