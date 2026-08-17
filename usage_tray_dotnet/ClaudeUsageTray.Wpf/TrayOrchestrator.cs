@@ -449,7 +449,7 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.OpacityPercent = _settings.PopupOpacityPercent;
         _popup.BlurPercent = _settings.PopupBlurPercent;
         _popup.CompactVisibleServices = CompactVisibleServices();
-        _trayMenu.ApplyTheme(new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark);
+        _trayMenu.ApplyTheme(ThemeHelper.IsCurrentThemeDark());
         _statsWindow?.RefreshTheme();
     }
 

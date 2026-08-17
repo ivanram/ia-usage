@@ -159,7 +159,7 @@ public partial class StatsWindow : Window
         var hwnd = new WindowInteropHelper(this).Handle;
         DwmHelper.EnableRoundedCorners(hwnd);
         DwmHelper.SetWindowIcon(hwnd, _smallTaskbarIcon.Handle, _bigTaskbarIcon.Handle);
-        var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+        var isDark = ThemeHelper.IsCurrentThemeDark();
         DwmHelper.SetTitleBarDarkMode(hwnd, isDark);
 
         FitToWorkArea();
@@ -466,7 +466,7 @@ public partial class StatsWindow : Window
         // Render() itself avoids one: it reads subtly different from this
         // window's own chosen background and would look like a mismatched
         // popup bolted onto the side.
-        var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+        var isDark = ThemeHelper.IsCurrentThemeDark();
         var popupBackground = isDark
             ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
             : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));
@@ -599,7 +599,7 @@ public partial class StatsWindow : Window
     {
         ContentHost.Children.Clear();
 
-        var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+        var isDark = ThemeHelper.IsCurrentThemeDark();
 
         RootGrid.Background = isDark
             ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))

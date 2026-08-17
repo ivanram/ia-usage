@@ -26,7 +26,7 @@ public partial class ToastWindow : Window
 
     public void ShowNear(string serviceName, string message)
     {
-        var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+        var isDark = ThemeHelper.IsCurrentThemeDark();
         RootBorder.Background = isDark
             ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
             : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));

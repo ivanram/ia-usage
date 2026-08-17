@@ -109,6 +109,29 @@ internal static class ThemeHelper
         return luminance > 0.4 ? Colors.Black : Colors.White;
     }
 
+    /// <summary>
+    /// Safe stand-in for the "new PaletteHelper().GetTheme().GetBaseTheme()
+    /// == BaseTheme.Dark" one-liner scattered across the popup, stats, toast
+    /// and tray-menu code — every one of those call sites can hit the same
+    /// "Cannot get theme outside of a WPF application" race documented on
+    /// Apply() above, just unguarded, so a mistimed startup or a toast that
+    /// races the popup's own theme application could crash the whole app
+    /// over what's ultimately a cosmetic light/dark read. Falls back to the
+    /// OS theme setting on failure, same as ResolveIsDark's own default.
+    /// </summary>
+    public static bool IsCurrentThemeDark()
+    {
+        try
+        {
+            return new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+        }
+        catch (Exception ex)
+        {
+            LogFailure("IsCurrentThemeDark", ex);
+            return IsSystemDarkMode();
+        }
+    }
+
     private static void LogFailure(string method, Exception ex)
     {
         try { File.AppendAllText(Path.Combine(Paths.LogsDir, "log_failures.txt"), $"{DateTime.Now:O} ThemeHelper.{method} failed: {ex}\n"); }

@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.10",
+        [
+            "Correcciones (la app podía cerrarse sola con un aviso de error de tema/color justo tras actualizar o arrancar, si el panel, Estadísticas o un aviso emergente pedían el color activo del sistema antes de que la ventana estuviera del todo lista — ahora esa lectura es segura en todos los sitios donde ocurría, no solo en el que ya estaba cubierto).",
+        ]),
         new("2.0.9",
         [
             "El uso de Fable (planes Max/Ultra) ahora se registra como una serie propia en Estadísticas, con su propia gráfica \"Claude - Fable\" separada de la de Claude — antes se leía en el panel principal pero no se guardaba en el historial, así que Estadísticas no tenía nada que mostrar de Fable.",

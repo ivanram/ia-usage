@@ -307,7 +307,7 @@ public partial class PopupWindow : Window
     /// </summary>
     private void ApplyThemeColors()
     {
-        var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+        var isDark = ThemeHelper.IsCurrentThemeDark();
 
         var baseColor = isDark ? Color.FromRgb(0x2B, 0x2B, 0x2E) : Color.FromRgb(0xFA, 0xFA, 0xFA);
         var hwnd = new WindowInteropHelper(this).Handle;
@@ -1038,7 +1038,7 @@ public partial class PopupWindow : Window
 
         if (StyleMode == PopupWindowStyle.Blur)
         {
-            var isDark = new PaletteHelper().GetTheme().GetBaseTheme() == BaseTheme.Dark;
+            var isDark = ThemeHelper.IsCurrentThemeDark();
             var baseColor = isDark ? Color.FromRgb(0x2B, 0x2B, 0x2E) : Color.FromRgb(0xFA, 0xFA, 0xFA);
             var tintAlpha = (byte)Math.Clamp(235 - BlurPercent / 100.0 * 185, 50, 235);
             DwmHelper.SetAcrylicBlur(hwnd, baseColor, tintAlpha);
