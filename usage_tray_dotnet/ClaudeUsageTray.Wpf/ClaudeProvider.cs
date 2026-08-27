@@ -111,8 +111,14 @@ public sealed class ClaudeProvider : IUsageProvider
                 if (remaining > 0) balance = remaining / divisor;
             }
 
+            // Once the last tranche hits zero, balance stays null forever
+            // (used_credits itself never resets) — showing "used: X" with no
+            // balance at that point isn't "you have credits" info any more,
+            // it's a permanent leftover of a topped-up account that's now
+            // exhausted. Hide the line entirely rather than have it outlive
+            // its usefulness.
             creditsLine = balance is null
-                ? Strings.F("provider.claude.credits.used", used, currency)
+                ? null
                 : Strings.F("provider.claude.credits.used_of", used, balance, currency);
         }
 

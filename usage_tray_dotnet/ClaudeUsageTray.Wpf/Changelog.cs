@@ -15,6 +15,14 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("2.0.12",
+        [
+            "Correcciones (la línea de créditos de Claude se quedaba mostrando \"Créditos usados: X\" para siempre en cuentas que agotaron su saldo, aunque ya no quedara nada — ahora esa línea desaparece en cuanto el saldo llega a cero).",
+        ]),
+        new("2.0.11",
+        [
+            "Correcciones (las barras de ChatGPT tenían las etiquetas cambiadas: la que se reinicia en horas se llamaba \"Límite semanal\" y la que se reinicia en días se llamaba \"Límite corto\" — ahora se llaman \"Límite de 5 horas\" y \"Límite semanal\" respectivamente, como en Claude).",
+        ]),
         new("2.0.10",
         [
             "Correcciones (la app podía cerrarse sola con un aviso de error de tema/color justo tras actualizar o arrancar, si el panel, Estadísticas o un aviso emergente pedían el color activo del sistema antes de que la ventana estuviera del todo lista — ahora esa lectura es segura en todos los sitios donde ocurría, no solo en el que ya estaba cubierto).",

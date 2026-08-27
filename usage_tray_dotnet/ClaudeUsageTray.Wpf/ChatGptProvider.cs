@@ -52,8 +52,8 @@ public sealed class ChatGptProvider : IUsageProvider
         var rateLimit = usage.GetProperty("rate_limit");
         var bars = new List<UsageBar>();
 
-        AddWindowBar(bars, rateLimit, "primary_window", Strings.T("provider.weekly"), isPrimary: true, qualifier: Strings.T("qualifier.weekly"), shortPrefix: Strings.T("prefix.weekly"));
-        AddWindowBar(bars, rateLimit, "secondary_window", Strings.T("provider.chatgpt.short"), isPrimary: false, qualifier: Strings.T("qualifier.short"), shortPrefix: Strings.T("prefix.short"));
+        AddWindowBar(bars, rateLimit, "primary_window", Strings.T("provider.claude.5h"), isPrimary: false, qualifier: Strings.T("qualifier.5h"), shortPrefix: Strings.T("prefix.5h"));
+        AddWindowBar(bars, rateLimit, "secondary_window", Strings.T("provider.weekly"), isPrimary: true, qualifier: Strings.T("qualifier.weekly"), shortPrefix: Strings.T("prefix.weekly"));
 
         string? creditsLine = null;
         if (usage.TryGetProperty("credits", out var credits) && credits.ValueKind == JsonValueKind.Object
