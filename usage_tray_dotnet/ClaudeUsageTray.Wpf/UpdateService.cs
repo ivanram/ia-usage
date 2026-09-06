@@ -290,30 +290,23 @@ internal static class UpdateService
         // truth instead of a separate copy that could drift out of sync.
         var changelog = root.TryGetProperty("body", out var bodyEl) ? bodyEl.GetString() : null;
 
-        // Each release carries two assets: the framework-dependent "-fx"
-        // build (a few MB, needs the .NET 8 Desktop Runtime already on the
-        // machine — which this same running process is living proof of)
-        // and the older self-contained one (much bigger, no dependency) for
-        // machines without that runtime. Since this code only runs on a
-        // machine already running a .NET app, the "-fx" asset is always the
-        // right pick when present; the self-contained one is kept only as a
-        // fallback for releases published before this asset existed.
-        string? fxUrl = null;
-        string? fallbackUrl = null;
+        // Each release carries exactly one portable exe asset ("ClaudeUsageTray.exe",
+        // self-contained — no .NET runtime dependency) alongside the installer;
+        // the self-update swap always targets that one, never the Setup.exe.
+        string? downloadUrl = null;
         if (root.TryGetProperty("assets", out var assets))
         {
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.GetProperty("name").GetString() ?? "";
-                if (!name.StartsWith("ClaudeUsageTray", StringComparison.OrdinalIgnoreCase) || !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                if (!name.Equals("ClaudeUsageTray.exe", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var url = asset.GetProperty("browser_download_url").GetString();
-                if (name.EndsWith("-fx.exe", StringComparison.OrdinalIgnoreCase)) fxUrl ??= url;
-                else fallbackUrl ??= url;
+                downloadUrl = asset.GetProperty("browser_download_url").GetString();
+                break;
             }
         }
-        return (version, fxUrl ?? fallbackUrl, changelog, false);
+        return (version, downloadUrl, changelog, false);
     }
 
     private static async Task DownloadAndApplyAsync(string downloadUrl, Version version)

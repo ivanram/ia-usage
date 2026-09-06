@@ -65,6 +65,10 @@ public sealed class AppSettings
 
     public AppLanguage Language { get; set; } = AppLanguage.Spanish;
     public bool AutoCheckUpdates { get; set; } = true;
+    /// <summary>Background/surface/text scheme for Settings and Stats only — see AppPalettes. "default" reproduces the app's normal look and keeps everything else (popup, toast, tray menu) untouched.</summary>
+    public string AppearancePaletteId { get; set; } = AppPalettes.DefaultId;
+    /// <summary>Cursor-tracking glow on hover, Settings/Stats buttons only — see HoverGlow.</summary>
+    public bool HoverGlowEnabled { get; set; } = true;
     /// <summary>Set by the "Hoy no, mañana" button on the update dialog — silent startup checks skip until this passes; a manual check always ignores it.</summary>
     public DateTime? UpdateSnoozeUntil { get; set; }
     /// <summary>When the app last actually queried GitHub for a release, successful or not — see UpdateService's throttling.</summary>

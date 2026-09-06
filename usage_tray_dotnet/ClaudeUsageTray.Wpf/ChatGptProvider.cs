@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace ClaudeUsageTray;
@@ -58,9 +59,22 @@ public sealed class ChatGptProvider : IUsageProvider
         string? creditsLine = null;
         if (usage.TryGetProperty("credits", out var credits) && credits.ValueKind == JsonValueKind.Object
             && credits.TryGetProperty("has_credits", out var hasCredits) && hasCredits.ValueKind == JsonValueKind.True
-            && credits.TryGetProperty("balance", out var balance))
+            && credits.TryGetProperty("balance", out var balance)
+            && decimal.TryParse(balance.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var balanceValue))
         {
-            creditsLine = Strings.F("provider.chatgpt.credits", balance.GetString() ?? "");
+            creditsLine = Strings.F("provider.chatgpt.credits", Math.Floor(balanceValue));
+        }
+
+        // rate_limit_reset_credits are the free "reset my quota now" grants ChatGPT
+        // occasionally hands out (e.g. after an outage) — available_count is how many
+        // are still unused. We deliberately drop the expiry date here to keep this
+        // line short; the ChatGPT settings page has the full detail if needed.
+        if (usage.TryGetProperty("rate_limit_reset_credits", out var resetCredits) && resetCredits.ValueKind == JsonValueKind.Object
+            && resetCredits.TryGetProperty("available_count", out var availableCount) && availableCount.ValueKind == JsonValueKind.Number
+            && availableCount.GetInt32() > 0)
+        {
+            var resetsLine = Strings.F("provider.chatgpt.resets", availableCount.GetInt32());
+            creditsLine = creditsLine is null ? resetsLine : $"{creditsLine} · {resetsLine}";
         }
 
         return new UsageSnapshot

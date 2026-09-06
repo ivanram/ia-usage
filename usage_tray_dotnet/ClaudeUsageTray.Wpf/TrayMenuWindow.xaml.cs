@@ -45,17 +45,12 @@ public partial class TrayMenuWindow : Window
         if (e.Key == Key.Escape) Hide();
     }
 
-    public void ApplyTheme(bool isDark)
+    public void ApplyTheme(bool isDark, string paletteId = AppPalettes.DefaultId)
     {
-        RootBorder.Background = isDark
-            ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
-            : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));
-        _textPrimary = isDark
-            ? new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2))
-            : new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A));
-        _textSecondary = isDark
-            ? new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xB8))
-            : new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
+        var palette = AppPalettes.Resolve(paletteId, isDark);
+        RootBorder.Background = palette.WindowBg;
+        _textPrimary = palette.Text;
+        _textSecondary = palette.TextSecondary;
     }
 
     public void ClearItems() => ContentHost.Children.Clear();

@@ -258,7 +258,7 @@ public sealed class TrayOrchestrator : IDisposable
     /// there to ride out DWM's blur-toggle fade — nothing here needs to
     /// block on it.
     /// </summary>
-    private void PreviewAppearance(PopupWindowStyle style, int opacityPercent, int blurPercent, string accentColor)
+    private void PreviewAppearance(PopupWindowStyle style, int opacityPercent, int blurPercent, string accentColor, string paletteId)
     {
         // WPF's modal ShowDialog() disables every OTHER open window
         // (Settings' own has no owner set, so this includes the popup even
@@ -279,7 +279,7 @@ public sealed class TrayOrchestrator : IDisposable
 
         var settings = _openSettingsWindow;
         _ = _popup.PreviewStyleAsync(
-            style, opacityPercent, blurPercent, flatBarColorHex,
+            style, opacityPercent, blurPercent, flatBarColorHex, paletteId,
             ready, hasAnyEnabled: enabled.Count > 0, lastUpdated: _lastUpdated, totalEnabled: enabled.Count,
             besideLeft: settings?.Left, besideTop: settings?.Top, besideWidth: settings?.ActualWidth, besideHeight: settings?.ActualHeight);
     }
@@ -418,7 +418,10 @@ public sealed class TrayOrchestrator : IDisposable
             return;
         }
 
-        _statsWindow = new StatsWindow(StatsServiceNames(), _historyStore, _promptCountStore, _promptScanCache, anchor);
+        _statsWindow = new StatsWindow(StatsServiceNames(), _historyStore, _promptCountStore, _promptScanCache, anchor)
+        {
+            PaletteId = _settings.AppearancePaletteId,
+        };
         _statsWindow.Closed += (s, e) => _statsWindow = null;
         _statsWindow.Show();
     }
@@ -448,8 +451,11 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.StyleMode = _settings.PopupWindowStyleMode;
         _popup.OpacityPercent = _settings.PopupOpacityPercent;
         _popup.BlurPercent = _settings.PopupBlurPercent;
+        _popup.PaletteId = _settings.AppearancePaletteId;
         _popup.CompactVisibleServices = CompactVisibleServices();
-        _trayMenu.ApplyTheme(ThemeHelper.IsCurrentThemeDark());
+        _trayMenu.ApplyTheme(ThemeHelper.IsCurrentThemeDark(), _settings.AppearancePaletteId);
+        HoverGlow.GloballyEnabled = _settings.HoverGlowEnabled;
+        if (_statsWindow is not null) _statsWindow.PaletteId = _settings.AppearancePaletteId;
         _statsWindow?.RefreshTheme();
     }
 

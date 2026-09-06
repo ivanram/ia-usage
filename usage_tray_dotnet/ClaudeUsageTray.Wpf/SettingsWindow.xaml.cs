@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -33,6 +34,9 @@ public partial class SettingsWindow : Window
     private int _selectedHoverDelay;
     private readonly Button[] _accentButtons = new Button[ThemeHelper.AccentSwatches.Length + 1];
     private string _selectedAccent;
+    private string _selectedPalette;
+    private readonly Dictionary<PaletteChipButton, string> _paletteButtons = new();
+    private ToggleButton _hoverGlowSwitch = null!;
     private readonly Button[] _windowStyleButtons = new Button[2];
     private PopupWindowStyle _selectedWindowStyle;
     private Slider _opacitySlider = null!;
@@ -72,7 +76,7 @@ public partial class SettingsWindow : Window
     private readonly Action<string> _triggerLogin;
     private readonly Action<AppTheme> _previewTheme;
     private readonly Action<AppLanguage> _previewLanguage;
-    private readonly Action<PopupWindowStyle, int, int, string> _previewAppearance;
+    private readonly Action<PopupWindowStyle, int, int, string, string> _previewAppearance;
     private readonly Action _openAbout;
     // Built in the constructor and sent to Windows later in OnSourceInitialized
     // — building these GDI+ icons right as the native HWND is being created
@@ -86,7 +90,7 @@ public partial class SettingsWindow : Window
     public AppSettings Result { get; private set; }
     public bool Saved { get; private set; }
 
-    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme, Action<AppLanguage> previewLanguage, Action<PopupWindowStyle, int, int, string> previewAppearance, Action openAbout)
+    public SettingsWindow(AppSettings current, Func<string, bool> isLoggedIn, Action<string> triggerLogin, Action<AppTheme> previewTheme, Action<AppLanguage> previewLanguage, Action<PopupWindowStyle, int, int, string, string> previewAppearance, Action openAbout)
     {
         InitializeComponent();
         Result = current;
@@ -95,8 +99,10 @@ public partial class SettingsWindow : Window
         _isDark = ThemeHelper.ResolveIsDark(current.Theme);
         _selectedHoverDelay = current.HoverDelaySeconds;
         _selectedAccent = current.AccentColor;
+        _selectedPalette = current.AppearancePaletteId;
         _selectedWindowStyle = current.PopupWindowStyleMode;
         _selectedLanguage = current.Language;
+        HoverGlow.GloballyEnabled = current.HoverGlowEnabled;
         _isLoggedIn = isLoggedIn;
         _triggerLogin = triggerLogin;
         _previewTheme = previewTheme;
@@ -113,7 +119,46 @@ public partial class SettingsWindow : Window
         CaptionIcon.Source = Imaging.CreateBitmapSourceFromHIcon(captionIcon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
 
         ApplyChrome();
+        ApplyPaletteOverrides();
         BuildCards();
+        HoverGlow.Attach(SaveButton, () => Brushes.White);
+        HoverGlow.Attach(CancelButton, () => (Brush)FindResource("MaterialDesign.Brush.Primary"));
+    }
+
+    /// <summary>
+    /// Overrides the same resource keys every style/SetResourceReference in
+    /// this window already reads via DynamicResource
+    /// (MaterialDesignPaper/CardBackground/Body/BodyLight/Divider), scoped
+    /// to THIS window's own Resources dictionary rather than
+    /// Application.Current — WPF resolves DynamicResource by walking up
+    /// from the element to the Window to the App, stopping at the first
+    /// match, so this reskins every card/button/divider in Settings for
+    /// free without touching a single existing Style, while the popup/
+    /// toast/tray menu (which look these keys up from Application.Current,
+    /// never seeing this Window's dictionary) stay exactly as they are.
+    /// "default" removes the override so lookup falls through to the real
+    /// MaterialDesignThemes palette, unchanged from before this feature.
+    /// </summary>
+    private static readonly string[] PaletteResourceKeys =
+    {
+        "MaterialDesignPaper", "MaterialDesignCardBackground", "MaterialDesignBody",
+        "MaterialDesignBodyLight", "MaterialDesignDivider",
+    };
+
+    private void ApplyPaletteOverrides()
+    {
+        if (_selectedPalette == AppPalettes.DefaultId)
+        {
+            foreach (var key in PaletteResourceKeys) Resources.Remove(key);
+            return;
+        }
+
+        var palette = AppPalettes.Resolve(_selectedPalette, ThemeHelper.ResolveIsDark(_selectedTheme));
+        Resources["MaterialDesignPaper"] = palette.WindowBg;
+        Resources["MaterialDesignCardBackground"] = palette.CardBg;
+        Resources["MaterialDesignBody"] = palette.Text;
+        Resources["MaterialDesignBodyLight"] = palette.TextSecondary;
+        Resources["MaterialDesignDivider"] = palette.Divider;
     }
 
     /// <summary>Top-level chrome (title, footer buttons, version label) that isn't part of any card — re-applied on language change same as the cards themselves.</summary>
@@ -369,6 +414,18 @@ public partial class SettingsWindow : Window
         stack.Children.Add(swatches);
 
         stack.Children.Add(new Border { Height = 20 });
+        stack.Children.Add(Hint(Strings.T("appearance.palette.hint")));
+
+        _paletteButtons.Clear();
+        var paletteRow = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+        foreach (var (id, name) in AppPalettes.All)
+        {
+            paletteRow.Children.Add(BuildPaletteChip(id, name));
+        }
+        stack.Children.Add(paletteRow);
+        RefreshPaletteChipColors();
+
+        stack.Children.Add(new Border { Height = 20 });
         stack.Children.Add(Hint(Strings.T("appearance.windowstyle.hint")));
 
         var (windowStyleRow, windowStyleButtons) = BuildSegmented(
@@ -391,6 +448,64 @@ public partial class SettingsWindow : Window
         _blurSlider.ValueChanged += (s, e) => NotifyAppearancePreview();
 
         UpdateWindowStyleRowVisibility();
+
+        stack.Children.Add(new Border { Height = 20 });
+        stack.Children.Add(BuildSwitchRow(Strings.T("appearance.hoverglow.label"), Strings.T("appearance.hoverglow.hint"), Result.HoverGlowEnabled, out _hoverGlowSwitch));
+        _hoverGlowSwitch.Checked += (s, e) => HoverGlow.GloballyEnabled = true;
+        _hoverGlowSwitch.Unchecked += (s, e) => HoverGlow.GloballyEnabled = false;
+    }
+
+    /// <summary>Mini mockup + name label, wrapped together so the click target and the caption move as one unit.</summary>
+    private StackPanel BuildPaletteChip(string id, string name)
+    {
+        var chip = new PaletteChipButton
+        {
+            Style = (Style)FindResource("PaletteChipButton"),
+            Tag = id == _selectedPalette ? "Selected" : null,
+        };
+        chip.Click += (s, e) => SelectPalette(id);
+        _paletteButtons[chip] = id;
+
+        var label = Hint(name);
+        label.Margin = new Thickness(0, 4, 0, 0);
+        label.HorizontalAlignment = HorizontalAlignment.Center;
+
+        var wrap = new StackPanel { Margin = new Thickness(0, 0, 10, 10) };
+        wrap.Children.Add(chip);
+        wrap.Children.Add(label);
+        return wrap;
+    }
+
+    /// <summary>Repaints every palette chip's mini mockup for the current theme (dark/light) and accent — called after building them, and again whenever either changes so the previews never go stale mid-session.</summary>
+    private void RefreshPaletteChipColors()
+    {
+        var isDarkNow = ThemeHelper.ResolveIsDark(_selectedTheme);
+        var accentDot = (Brush)new BrushConverter().ConvertFrom(ResolvedAccentHex(isDarkNow))!;
+        foreach (var (chip, id) in _paletteButtons)
+        {
+            var palette = AppPalettes.Resolve(id, isDarkNow);
+            chip.ChipBg = palette.WindowBg;
+            chip.ChipSurface = palette.CardBg;
+            chip.ChipText = palette.Text;
+            chip.ChipAccentDot = accentDot;
+        }
+    }
+
+    /// <summary>Same "Original" light/dark-variant resolution ThemeHelper.ApplyAccent does internally, exposed here so the palette chips' accent dot can mirror it without actually re-applying the accent.</summary>
+    private string ResolvedAccentHex(bool isDark) =>
+        _selectedAccent == AppSettings.OriginalAccentSentinel
+            ? (isDark ? ThemeHelper.OriginalSwatchColorDark : ThemeHelper.OriginalSwatchColor)
+            : _selectedAccent;
+
+    private void SelectPalette(string id)
+    {
+        _selectedPalette = id;
+        foreach (var (chip, chipId) in _paletteButtons)
+        {
+            chip.Tag = chipId == id ? "Selected" : null;
+        }
+        ApplyPaletteOverrides();
+        NotifyAppearancePreview();
     }
 
     private void SelectWindowStyle(int index)
@@ -403,15 +518,17 @@ public partial class SettingsWindow : Window
 
     /// <summary>
     /// Pops the main panel up (pinned) showing exactly what the currently
-    /// selected style/opacity/blur/theme/accent would look like — nothing
-    /// is saved to Result here, that only happens on Guardar (see
+    /// selected style/opacity/blur/theme/accent/palette would look like —
+    /// nothing is saved to Result here, that only happens on Guardar (see
     /// SnapshotIntoResult). Theme itself isn't passed through: SelectTheme
     /// already applies it globally via _previewTheme/ThemeHelper before
-    /// calling this, and the popup's own re-render picks the live palette
-    /// straight from there.
+    /// calling this, and the popup's own re-render picks the live theme
+    /// straight from there. AppearancePaletteId is a separate axis
+    /// (background/surface/text scheme, not dark/light) that ThemeHelper
+    /// knows nothing about, so it has to be threaded through explicitly.
     /// </summary>
     private void NotifyAppearancePreview() =>
-        _previewAppearance(_selectedWindowStyle, (int)_opacitySlider.Value, (int)_blurSlider.Value, _selectedAccent);
+        _previewAppearance(_selectedWindowStyle, (int)_opacitySlider.Value, (int)_blurSlider.Value, _selectedAccent, _selectedPalette);
 
     private void UpdateWindowStyleRowVisibility()
     {
@@ -503,6 +620,10 @@ public partial class SettingsWindow : Window
         ThemeHelper.ApplyAccent(_selectedAccent);
         DwmHelper.SetTitleBarDarkMode(new WindowInteropHelper(this).Handle, ThemeHelper.ResolveIsDark(_selectedTheme));
         NotifyAppearancePreview();
+        // A non-default palette's literal hexes depend on light/dark, so
+        // they need re-resolving too — a no-op for the "default" id.
+        ApplyPaletteOverrides();
+        RefreshPaletteChipColors();
     }
 
     private void SelectAccent(string value)
@@ -515,6 +636,7 @@ public partial class SettingsWindow : Window
         }
         ThemeHelper.ApplyAccent(value);
         NotifyAppearancePreview();
+        RefreshPaletteChipColors();
     }
 
     private (UniformGrid Row, Button[] Buttons) BuildSegmented(string[] labels, Action<int> onSelect, int selectedIndex)
@@ -534,6 +656,7 @@ public partial class SettingsWindow : Window
                 onSelect(idx);
                 StyleSegmented(buttons, idx);
             };
+            HoverGlow.Attach(btn, () => (Brush)FindResource("MaterialDesign.Brush.Primary"));
             row.Children.Add(btn);
             buttons[i] = btn;
         }
@@ -742,6 +865,8 @@ public partial class SettingsWindow : Window
             HoverDelaySeconds = _selectedHoverDelay,
             Theme = _selectedTheme,
             AccentColor = _selectedAccent,
+            AppearancePaletteId = _selectedPalette,
+            HoverGlowEnabled = _hoverGlowSwitch.IsChecked == true,
             AnimationsEnabled = _animationsEnabled.IsChecked == true,
             PopupWindowStyleMode = _selectedWindowStyle,
             PopupOpacityPercent = (int)_opacitySlider.Value,

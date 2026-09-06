@@ -15,6 +15,23 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("3.1.1",
+        [
+            "Correcciones (el saldo de créditos de ChatGPT salía multiplicado por mil al mostrarlo sin decimales; ahora se muestra correctamente).",
+        ]),
+        new("3.1.0",
+        [
+            "Nuevo: ChatGPT ahora también muestra los restablecimientos de cuota gratuitos disponibles (\"Cuota reset: N\"), junto al saldo de créditos, cuando la cuenta tiene alguno.",
+        ]),
+        new("3.0.0",
+        [
+            "Correcciones (la ventana de Ajustes es ahora más ancha de serie para que las 4 paletas de color quepan en una sola fila, en vez de dejar una suelta en la fila de abajo).",
+        ]),
+        new("2.1.0",
+        [
+            "Nueva paleta de color para Ajustes, Estadísticas, el panel flotante y el menú del systray: además del look de siempre, ahora hay Grafito, Escarcha y Ámbar, con una miniatura en vivo de cada una antes de aplicarla — el color de acento sigue siendo independiente, como antes.",
+            "Nuevo brillo sutil que sigue al cursor al pasar por botones de Ajustes y Estadísticas, con un interruptor para desactivarlo.",
+        ]),
         new("2.0.12",
         [
             "Correcciones (la línea de créditos de Claude se quedaba mostrando \"Créditos usados: X\" para siempre en cuentas que agotaron su saldo, aunque ya no quedara nada — ahora esa línea desaparece en cuanto el saldo llega a cero).",

@@ -42,6 +42,9 @@ public partial class StatsWindow : Window
     private const double MaxZoom = 4.0;
     private const double ZoomStep = 0.25;
 
+    /// <summary>Background/surface/text scheme, shared with SettingsWindow's own picker — see AppPalettes. Pushed in by TrayOrchestrator alongside theme/accent.</summary>
+    public string PaletteId { get; set; } = AppPalettes.DefaultId;
+
     private readonly List<string> _serviceNames;
     private readonly UsageHistoryStore _historyStore;
     private readonly PromptCountStore _promptCountStore;
@@ -381,6 +384,7 @@ public partial class StatsWindow : Window
             _showCalendar = !_showCalendar;
             Render();
         };
+        HoverGlow.Attach(border, () => accent);
         return border;
     }
 
@@ -412,6 +416,7 @@ public partial class StatsWindow : Window
             },
         };
         border.MouseLeftButtonUp += (s, e) => ShowDatePickerPopup(border, accent);
+        HoverGlow.Attach(border, () => accent);
         return border;
     }
 
@@ -466,10 +471,7 @@ public partial class StatsWindow : Window
         // Render() itself avoids one: it reads subtly different from this
         // window's own chosen background and would look like a mismatched
         // popup bolted onto the side.
-        var isDark = ThemeHelper.IsCurrentThemeDark();
-        var popupBackground = isDark
-            ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
-            : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));
+        var popupBackground = AppPalettes.Resolve(PaletteId, ThemeHelper.IsCurrentThemeDark()).WindowBg;
 
         var popup = new Popup
         {
@@ -533,6 +535,7 @@ public partial class StatsWindow : Window
             _showCalendar = false;
             Render();
         };
+        HoverGlow.Attach(border, () => accent);
         return border;
     }
 
@@ -576,6 +579,7 @@ public partial class StatsWindow : Window
             _promptMode = mode;
             Render();
         };
+        HoverGlow.Attach(border, () => promptLineBrush);
         return border;
     }
 
@@ -600,30 +604,22 @@ public partial class StatsWindow : Window
         ContentHost.Children.Clear();
 
         var isDark = ThemeHelper.IsCurrentThemeDark();
+        // AppPalettes.Resolve(AppPalettes.DefaultId, isDark) reproduces
+        // exactly the literals this block used to hardcode inline — a
+        // non-default PaletteId (set by SettingsWindow's picker, pushed in
+        // by TrayOrchestrator) swaps all five for an alternate scheme.
+        var palette = AppPalettes.Resolve(PaletteId, isDark);
 
-        RootGrid.Background = isDark
-            ? new SolidColorBrush(Color.FromRgb(0x2B, 0x2B, 0x2E))
-            : new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA));
-
-        var textPrimary = isDark
-            ? new SolidColorBrush(Color.FromRgb(0xF2, 0xF2, 0xF2))
-            : new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A));
-
-        var textSecondary = isDark
-            ? new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xB8))
-            : new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55));
-
-        var gridBrush = isDark
-            ? new SolidColorBrush(Color.FromRgb(0x45, 0x45, 0x48))
-            : new SolidColorBrush(Color.FromRgb(0xE2, 0xE2, 0xE2));
+        RootGrid.Background = palette.WindowBg;
+        var textPrimary = palette.Text;
+        var textSecondary = palette.TextSecondary;
+        var gridBrush = palette.CardBg;
 
         // A subtly cooler/lighter gray than the regular card background —
         // just enough to tell the always-on Totales cards apart from the
         // active-tab-scoped ones at a glance, without introducing a whole
         // new color into the window.
-        var totalsCardBackground = isDark
-            ? new SolidColorBrush(Color.FromRgb(0x4C, 0x4C, 0x56))
-            : new SolidColorBrush(Color.FromRgb(0xE6, 0xE6, 0xEF));
+        var totalsCardBackground = palette.CardBgAlt;
 
         var accent = (Brush)FindResource("MaterialDesign.Brush.Primary");
         var fillBrush = accent.Clone();
@@ -769,7 +765,11 @@ public partial class StatsWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var prevButton = BuildCalendarNavButton("‹", canGoPrev, textPrimary, textSecondary);
-        if (canGoPrev) prevButton.MouseLeftButtonUp += (s, e) => { _calendarMonth = _calendarMonth.AddMonths(-1); Render(); };
+        if (canGoPrev)
+        {
+            prevButton.MouseLeftButtonUp += (s, e) => { _calendarMonth = _calendarMonth.AddMonths(-1); Render(); };
+            HoverGlow.Attach(prevButton, () => accent);
+        }
         Grid.SetColumn(prevButton, 0);
         header.Children.Add(prevButton);
 
@@ -786,7 +786,11 @@ public partial class StatsWindow : Window
         header.Children.Add(monthLabel);
 
         var nextButton = BuildCalendarNavButton("›", canGoNext, textPrimary, textSecondary);
-        if (canGoNext) nextButton.MouseLeftButtonUp += (s, e) => { _calendarMonth = _calendarMonth.AddMonths(1); Render(); };
+        if (canGoNext)
+        {
+            nextButton.MouseLeftButtonUp += (s, e) => { _calendarMonth = _calendarMonth.AddMonths(1); Render(); };
+            HoverGlow.Attach(nextButton, () => accent);
+        }
         Grid.SetColumn(nextButton, 2);
         header.Children.Add(nextButton);
 

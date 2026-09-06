@@ -1,9 +1,8 @@
 <#
 .SYNOPSIS
-    Builds, smoke-tests, and stages a ClaudeUsageTray release: the
-    self-contained exe, the framework-dependent (-fx) exe, and the
-    per-user installer, all from one script instead of hand-typed
-    dotnet/ISCC commands.
+    Builds, smoke-tests, and stages a ClaudeUsageTray release: the portable
+    self-contained exe and the per-user installer, all from one script
+    instead of hand-typed dotnet/ISCC commands.
 
 .WHY THIS EXISTS
     Every prior release was built by re-typing the same dotnet publish /
@@ -31,10 +30,25 @@
 .PARAMETER SkipInstaller
     Skip compiling the Inno Setup installer (e.g. if Inno Setup isn't
     installed on this machine, or only the portable exes are needed).
+
+.PARAMETER Kind
+    Mandatory. Bumps <Version> in the csproj automatically before building,
+    per Ivan's numbering rule:
+      Fix    - 0.0.x  bug fixes / corrections, patch+1
+      Change - 0.x.0  new features / behavior changes, minor+1, patch reset
+               to 0 -- except once minor is already 9, where the NEXT
+               Change rolls over to the next major instead (x.9.y -> (x+1).0.0),
+               so minor never reaches 10
+      Major  - x.0.0  breaking / major changes, major+1, minor+patch reset
+    No default on purpose -- forces a conscious choice every release
+    instead of silently bumping the wrong digit.
 #>
 [CmdletBinding()]
 param(
-    [switch]$SkipInstaller
+    [switch]$SkipInstaller,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('Fix', 'Change', 'Major')]
+    [string]$Kind
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,18 +63,34 @@ function Write-Ok($msg) { Write-Host "  OK: $msg" -ForegroundColor Green }
 function Write-Fail($msg) { Write-Host "  FAIL: $msg" -ForegroundColor Red }
 
 # ---------------------------------------------------------------------------
-# Version: read once from the csproj, used everywhere below (installer arg,
-# archive folder name) -- a single source of truth instead of a version typed
-# separately in two or three places, which is exactly the kind of thing that
-# quietly drifts out of sync.
+# Version: bumped here automatically per -Kind, then used everywhere below
+# (installer arg, archive folder name) -- a single source of truth instead
+# of a version hand-edited in the csproj and typed separately elsewhere,
+# which is exactly the kind of thing that quietly drifts out of sync (or
+# gets forgotten entirely -- see the stale-build mixup this replaced).
 # ---------------------------------------------------------------------------
-Write-Step "Reading version from csproj"
+Write-Step "Bumping version ($Kind)"
 $csprojContent = Get-Content $csproj -Raw
-if ($csprojContent -notmatch '<Version>([\d.]+)</Version>') {
+if ($csprojContent -notmatch '<Version>(\d+)\.(\d+)\.(\d+)</Version>') {
     throw "Could not find <Version> in $csproj"
 }
-$version = $Matches[1]
-Write-Ok "Version = $version"
+$major = [int]$Matches[1]
+$minor = [int]$Matches[2]
+$patch = [int]$Matches[3]
+
+switch ($Kind) {
+    'Fix' { $patch++ }
+    'Change' {
+        if ($minor -ge 9) { $major++; $minor = 0 } else { $minor++ }
+        $patch = 0
+    }
+    'Major' { $major++; $minor = 0; $patch = 0 }
+}
+
+$version = "$major.$minor.$patch"
+$csprojContent = $csprojContent -replace '<Version>[\d.]+</Version>', "<Version>$version</Version>"
+Set-Content -Path $csproj -Value $csprojContent -NoNewline
+Write-Ok "Version bumped to $version"
 
 # ---------------------------------------------------------------------------
 # Sanity build first -- fail fast on a compile error instead of discovering
@@ -136,23 +166,6 @@ Write-Ok "Published to $scExe"
 Test-ExeStartsCleanly -ExePath $scExe -Label "self-contained build"
 
 # ---------------------------------------------------------------------------
-# Framework-dependent (-fx) -- needs the .NET 8 Desktop Runtime already on
-# the machine, but much smaller. THE FLAG THAT WAS MISSING: without
-# IncludeNativeLibrariesForSelfExtract here too, this build silently ships
-# without e_sqlite3.dll and crashes on first launch -- this is the exact bug
-# that prompted writing this whole script.
-# ---------------------------------------------------------------------------
-Write-Step "Publishing framework-dependent (-fx) build"
-$publishFx = Join-Path $wpfDir 'publish_fx'
-& dotnet publish $csproj -c Release -r win-x64 --self-contained false `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -o $publishFx
-if ($LASTEXITCODE -ne 0) { throw "Framework-dependent publish failed" }
-$fxExe = Join-Path $publishFx 'ClaudeUsageTray.exe'
-Write-Ok "Published to $fxExe"
-Test-ExeStartsCleanly -ExePath $fxExe -Label "framework-dependent (-fx) build"
-
-# ---------------------------------------------------------------------------
 # Installer payload: a copy of the self-contained build (so people who
 # install via Setup never need the separate runtime either).
 # ---------------------------------------------------------------------------
@@ -196,15 +209,12 @@ if (Test-Path $flatSc) {
         if ($oldVersion -ne $version -and -not (Test-Path $archiveDir)) {
             New-Item -ItemType Directory -Path $archiveDir | Out-Null
             Move-Item $flatSc (Join-Path $archiveDir 'ClaudeUsageTray.exe') -Force
-            $flatFx = Join-Path $releasesDir 'ClaudeUsageTray-fx.exe'
-            if (Test-Path $flatFx) { Move-Item $flatFx (Join-Path $archiveDir 'ClaudeUsageTray-fx.exe') -Force }
             Write-Ok "Archived v$oldVersion to $archiveDir"
         }
     }
 }
 
 Copy-Item $scExe $flatSc -Force
-Copy-Item $fxExe (Join-Path $releasesDir 'ClaudeUsageTray-fx.exe') -Force
 Write-Ok "Staged v$version as the flat (latest) build in $releasesDir"
 
 # Keep only the 5 most recent version subfolders.
@@ -217,5 +227,4 @@ $versionDirs | Select-Object -Skip 5 | ForEach-Object {
 
 Write-Host "`n=== Done: v$version staged in $releasesDir ===" -ForegroundColor Cyan
 if ($setupExe) { Write-Host "Installer: $setupExe" }
-Write-Host "Self-contained: $flatSc"
-Write-Host "Framework-dependent: $(Join-Path $releasesDir 'ClaudeUsageTray-fx.exe')"
+Write-Host "Portable: $flatSc"

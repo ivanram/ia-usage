@@ -57,6 +57,8 @@ public partial class PopupWindow : Window
     public PopupWindowStyle StyleMode { get; set; } = PopupWindowStyle.Standard;
     public int OpacityPercent { get; set; } = 100;
     public int BlurPercent { get; set; } = 45;
+    /// <summary>Background/surface/text scheme — see AppPalettes. Same "default" sentinel reproduces this panel's original look exactly.</summary>
+    public string PaletteId { get; set; } = AppPalettes.DefaultId;
 
     /// <summary>Which service names to show while <see cref="CompactMode"/> is on — independent of which services are enabled/shown in the full layout. Pushed in by TrayOrchestrator from AppSettings' CompactShow* fields.</summary>
     public HashSet<string> CompactVisibleServices { get; set; } = new();
@@ -308,8 +310,9 @@ public partial class PopupWindow : Window
     private void ApplyThemeColors()
     {
         var isDark = ThemeHelper.IsCurrentThemeDark();
+        var palette = AppPalettes.Resolve(PaletteId, isDark);
 
-        var baseColor = isDark ? Color.FromRgb(0x2B, 0x2B, 0x2E) : Color.FromRgb(0xFA, 0xFA, 0xFA);
+        var baseColor = ((SolidColorBrush)palette.WindowBg).Color;
         var hwnd = new WindowInteropHelper(this).Handle;
 
         if (StyleMode == PopupWindowStyle.Blur)
@@ -376,13 +379,8 @@ public partial class PopupWindow : Window
         // primary line. Standard mode keeps the original softer pairing.
         var blurMode = StyleMode == PopupWindowStyle.Blur;
 
-        _textPrimary = isDark
-            ? new SolidColorBrush(blurMode ? Colors.White : Color.FromRgb(0xF2, 0xF2, 0xF2))
-            : new SolidColorBrush(blurMode ? Colors.Black : Color.FromRgb(0x1A, 0x1A, 0x1A));
-
-        _textSecondary = isDark
-            ? new SolidColorBrush(blurMode ? Colors.White : Color.FromRgb(0xB8, 0xB8, 0xB8))
-            : new SolidColorBrush(blurMode ? Colors.Black : Color.FromRgb(0x55, 0x55, 0x55));
+        _textPrimary = blurMode ? new SolidColorBrush(isDark ? Colors.White : Colors.Black) : palette.Text;
+        _textSecondary = blurMode ? new SolidColorBrush(isDark ? Colors.White : Colors.Black) : palette.TextSecondary;
 
         UpdatePinGlyphColor();
         UpdateStatsGlyphColor();
@@ -1039,7 +1037,7 @@ public partial class PopupWindow : Window
         if (StyleMode == PopupWindowStyle.Blur)
         {
             var isDark = ThemeHelper.IsCurrentThemeDark();
-            var baseColor = isDark ? Color.FromRgb(0x2B, 0x2B, 0x2E) : Color.FromRgb(0xFA, 0xFA, 0xFA);
+            var baseColor = ((SolidColorBrush)AppPalettes.Resolve(PaletteId, isDark).WindowBg).Color;
             var tintAlpha = (byte)Math.Clamp(235 - BlurPercent / 100.0 * 185, 50, 235);
             DwmHelper.SetAcrylicBlur(hwnd, baseColor, tintAlpha);
             DwmHelper.EnableRoundedCorners(hwnd);
@@ -1139,7 +1137,7 @@ public partial class PopupWindow : Window
     /// place instantly, same as before.
     /// </summary>
     public async Task PreviewStyleAsync(
-        PopupWindowStyle style, int opacityPercent, int blurPercent, string? flatBarColorHex,
+        PopupWindowStyle style, int opacityPercent, int blurPercent, string? flatBarColorHex, string paletteId,
         IEnumerable<UsageSnapshot> snapshots, bool hasAnyEnabled, DateTime? lastUpdated, int totalEnabled,
         double? besideLeft, double? besideTop, double? besideWidth, double? besideHeight)
     {
@@ -1151,6 +1149,7 @@ public partial class PopupWindow : Window
         OpacityPercent = opacityPercent;
         BlurPercent = blurPercent;
         FlatBarColorHex = flatBarColorHex;
+        PaletteId = paletteId;
         Render(snapshots, hasAnyEnabled, lastUpdated, totalEnabled);
 
         if (wasVisible)
