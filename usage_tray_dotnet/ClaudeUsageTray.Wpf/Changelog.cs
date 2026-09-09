@@ -15,6 +15,10 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("3.1.2",
+        [
+            "Correcciones (en cuentas de ChatGPT con límites propios de Codex, la tarjeta de ChatGPT mostraba el límite semanal general etiquetado como si fuera el de 5 horas, y no mostraba ningún límite semanal en absoluto; ahora se identifican correctamente ambos límites según su duración real, con datos reales de una cuenta afectada).",
+        ]),
         new("3.1.1",
         [
             "Correcciones (el saldo de créditos de ChatGPT salía multiplicado por mil al mostrarlo sin decimales; ahora se muestra correctamente).",
