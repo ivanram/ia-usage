@@ -15,6 +15,11 @@ internal static class Changelog
 
     public static readonly Entry[] Entries =
     [
+        new("3.2.0",
+        [
+            "Correcciones (en cuentas de ChatGPT donde el límite de Codex vive aparte del límite semanal general, la tarjeta de ChatGPT las mezclaba en una sola barra y perdía una de las dos — ahora se muestran los tres límites por separado: 5 horas, semanal general y semanal del modelo, con datos reales de una cuenta afectada).",
+            "Nuevo apartado de depuración en Ajustes → General: casilla para guardar (o no) datos de diagnóstico de cada actualización, botón para guardarlos y compartirlos, y botón para borrarlos.",
+        ]),
         new("3.1.2",
         [
             "Correcciones (en cuentas de ChatGPT con límites propios de Codex, la tarjeta de ChatGPT mostraba el límite semanal general etiquetado como si fuera el de 5 horas, y no mostraba ningún límite semanal en absoluto; ahora se identifican correctamente ambos límites según su duración real, con datos reales de una cuenta afectada).",

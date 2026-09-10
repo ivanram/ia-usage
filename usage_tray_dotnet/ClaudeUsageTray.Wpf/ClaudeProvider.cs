@@ -187,6 +187,7 @@ public sealed class ClaudeProvider : IUsageProvider
 
     private static void LogUsageShape(JsonElement usage)
     {
+        if (!AppSettings.DiagnosticsEnabled) return;
         try { File.AppendAllText(UsageDebugFile, $"{DateTime.Now:O} {usage.GetRawText()}\n"); } catch { /* best effort */ }
     }
 
@@ -226,6 +227,7 @@ public sealed class ClaudeProvider : IUsageProvider
 
     private static void LogCredits(JsonElement credits)
     {
+        if (!AppSettings.DiagnosticsEnabled) return;
         try { File.AppendAllText(CreditsDebugFile, $"{DateTime.Now:O} {credits.GetRawText()}\n"); } catch { /* best effort */ }
     }
 }

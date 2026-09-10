@@ -455,6 +455,7 @@ public sealed class TrayOrchestrator : IDisposable
         _popup.CompactVisibleServices = CompactVisibleServices();
         _trayMenu.ApplyTheme(ThemeHelper.IsCurrentThemeDark(), _settings.AppearancePaletteId);
         HoverGlow.GloballyEnabled = _settings.HoverGlowEnabled;
+        AppSettings.DiagnosticsEnabled = _settings.SaveDiagnostics;
         if (_statsWindow is not null) _statsWindow.PaletteId = _settings.AppearancePaletteId;
         _statsWindow?.RefreshTheme();
     }

@@ -74,6 +74,25 @@ public sealed class AppSettings
     /// <summary>When the app last actually queried GitHub for a release, successful or not — see UpdateService's throttling.</summary>
     public DateTime? LastUpdateCheckAt { get; set; }
 
+    /// <summary>
+    /// Whether providers may append raw usage-shape payloads (account email,
+    /// plan, credit balance...) to the debug files under Paths.LogsDir — see
+    /// ClaudeProvider.LogUsageShape/LogCredits and
+    /// ChatGptProvider.LogUsageShape. On by default because those files are
+    /// exactly what diagnosed the last two ChatGPT rate-limit bugs (both
+    /// account shapes nobody on this project could reproduce locally); the
+    /// Settings toggle exists so a user can turn it off once they're not
+    /// actively helping debug something.
+    /// </summary>
+    public bool SaveDiagnostics { get; set; } = true;
+
+    /// <summary>
+    /// Live mirror of <see cref="SaveDiagnostics"/> for the static provider
+    /// code that has no AppSettings instance handy — same pattern as
+    /// HoverGlow.GloballyEnabled. Kept in sync by TrayOrchestrator.ApplyTheme.
+    /// </summary>
+    public static bool DiagnosticsEnabled { get; set; } = true;
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "ClaudeUsageTray", "settings.json");

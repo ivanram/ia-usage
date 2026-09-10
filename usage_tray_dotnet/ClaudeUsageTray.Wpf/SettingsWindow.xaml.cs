@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Windows;
+using IoPath = System.IO.Path;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
@@ -70,6 +72,7 @@ public partial class SettingsWindow : Window
     private TextBox _telegramToken = null!;
     private ToggleButton _autoStart = null!;
     private ToggleButton _animationsEnabled = null!;
+    private ToggleButton _saveDiagnostics = null!;
 
     private readonly long? _telegramChatId;
     private readonly Func<string, bool> _isLoggedIn;
@@ -311,6 +314,10 @@ public partial class SettingsWindow : Window
         stack.Children.Add(Hint(Strings.T("general.language.label")));
         var (languageRow, _) = BuildSegmented(new[] { "Español", "English" }, SelectLanguage, (int)_selectedLanguage);
         stack.Children.Add(languageRow);
+        stack.Children.Add(new Border { Height = 22 });
+
+        stack.Children.Add(new TextBlock { Text = Strings.T("card.debugging"), FontSize = BodySize, FontWeight = FontWeights.Medium, Margin = new Thickness(0, 0, 0, 5) });
+        BuildDebuggingSection(stack);
     }
 
     private void SelectLanguage(int index)
@@ -819,6 +826,118 @@ public partial class SettingsWindow : Window
         UpdateNotify80Availability();
     }
 
+    private void BuildDebuggingSection(StackPanel stack)
+    {
+        stack.Children.Add(BuildSwitchRow(Strings.T("debug.save.label"), Strings.T("debug.save.hint"), Result.SaveDiagnostics, out _saveDiagnostics));
+        stack.Children.Add(new Border { Height = 20 });
+
+        var buttonsRow = new StackPanel { Orientation = Orientation.Horizontal };
+
+        var shareButton = DebugActionButton(Strings.T("debug.share.button"));
+        shareButton.Margin = new Thickness(0, 0, 12, 0);
+        shareButton.Click += (s, e) => OnShareLogsClick();
+        buttonsRow.Children.Add(shareButton);
+
+        var clearButton = DebugActionButton(Strings.T("debug.clear.button"));
+        clearButton.Click += (s, e) => OnClearDiagnosticsClick();
+        buttonsRow.Children.Add(clearButton);
+
+        stack.Children.Add(buttonsRow);
+    }
+
+    /// <summary>
+    /// PrimaryButton/SecondaryButton's shared ControlTemplate centers a plain
+    /// string Content in a ContentPresenter that never reads the Button's own
+    /// Padding — setting Padding on the button itself is silently a no-op,
+    /// which is why "Guardar y compartir logs" rendered nearly edge-to-edge
+    /// against the pill's rounded border. Wrapping the label in its own
+    /// TextBlock with a real Margin sidesteps that (the ContentPresenter
+    /// sizes to fit its child, margin included) without touching the shared
+    /// style used by the fixed-width Cancelar/Guardar footer buttons.
+    /// </summary>
+    private Button DebugActionButton(string label)
+    {
+        var button = new Button
+        {
+            Style = (Style)FindResource("SecondaryButton"),
+            Content = new TextBlock { Text = label, Margin = new Thickness(18, 0, 18, 0), TextWrapping = TextWrapping.NoWrap, VerticalAlignment = VerticalAlignment.Center },
+        };
+        HoverGlow.Attach(button, () => (Brush)FindResource("MaterialDesign.Brush.Primary"));
+        return button;
+    }
+
+    /// <summary>
+    /// Bundles every file under Paths.LogsDir into one plain-text file (not a
+    /// zip — the "share" verb below has no need for compression, and a
+    /// single .txt is one less "please unzip this" step for whoever the log
+    /// gets shared with) and hands it to Windows' native Share flyout via
+    /// ShareHelper. Falls back to just revealing the file in Explorer if the
+    /// "share" verb isn't available for some reason.
+    /// </summary>
+    private void OnShareLogsClick()
+    {
+        string[] files;
+        try { files = Directory.GetFiles(Paths.LogsDir); }
+        catch { files = Array.Empty<string>(); }
+
+        if (files.Length == 0)
+        {
+            AppDialogWindow.ShowInfo(Strings.T("debug.share.nofiles.title"), Strings.T("debug.share.nofiles.message"));
+            return;
+        }
+
+        string combinedPath;
+        try
+        {
+            combinedPath = IoPath.Combine(IoPath.GetTempPath(), $"ClaudeUsageTray-logs-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            using var writer = new StreamWriter(combinedPath, false);
+            foreach (var file in files)
+            {
+                writer.WriteLine($"=== {IoPath.GetFileName(file)} ===");
+                try { writer.WriteLine(File.ReadAllText(file)); }
+                catch (Exception ex) { writer.WriteLine($"(no se pudo leer: {ex.Message})"); }
+                writer.WriteLine();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppDialogWindow.ShowInfo(Strings.T("debug.share.error.title"), Strings.F("debug.share.error.message", ex.Message));
+            return;
+        }
+
+        if (!ShareHelper.TryShareFile(combinedPath))
+        {
+            ShareHelper.RevealInExplorer(combinedPath);
+            AppDialogWindow.ShowInfo(Strings.T("debug.share.fallback.title"), Strings.F("debug.share.fallback.message", combinedPath));
+        }
+    }
+
+    private void OnClearDiagnosticsClick()
+    {
+        if (!AppDialogWindow.ShowYesNo(Strings.T("debug.clear.confirm.title"), Strings.T("debug.clear.confirm.message")))
+        {
+            return;
+        }
+
+        var errors = new List<string>();
+        try
+        {
+            foreach (var file in Directory.GetFiles(Paths.LogsDir))
+            {
+                try { File.Delete(file); }
+                catch (Exception ex) { errors.Add($"{IoPath.GetFileName(file)}: {ex.Message}"); }
+            }
+        }
+        catch (Exception ex)
+        {
+            errors.Add(ex.Message);
+        }
+
+        AppDialogWindow.ShowInfo(
+            Strings.T("debug.clear.done.title"),
+            errors.Count == 0 ? Strings.T("debug.clear.done.message") : Strings.F("debug.clear.error.message", string.Join("\n", errors)));
+    }
+
     private static TextBlock BulletPoint(string text) => new()
     {
         Text = text,
@@ -868,6 +987,7 @@ public partial class SettingsWindow : Window
             AppearancePaletteId = _selectedPalette,
             HoverGlowEnabled = _hoverGlowSwitch.IsChecked == true,
             AnimationsEnabled = _animationsEnabled.IsChecked == true,
+            SaveDiagnostics = _saveDiagnostics.IsChecked == true,
             PopupWindowStyleMode = _selectedWindowStyle,
             PopupOpacityPercent = (int)_opacitySlider.Value,
             PopupBlurPercent = (int)_blurSlider.Value,

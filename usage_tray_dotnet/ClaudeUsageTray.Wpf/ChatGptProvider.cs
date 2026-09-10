@@ -61,16 +61,7 @@ public sealed class ChatGptProvider : IUsageProvider
         var usage = root.GetProperty("usage");
         LogUsageShape(usage);
 
-        var (fiveHourWindow, weeklyWindow) = FindWindows(usage);
-        var bars = new List<UsageBar>();
-        if (fiveHourWindow is JsonElement fiveHour)
-        {
-            bars.Add(BuildWindowBar(fiveHour, Strings.T("provider.claude.5h"), isPrimary: false, qualifier: Strings.T("qualifier.5h"), shortPrefix: Strings.T("prefix.5h")));
-        }
-        if (weeklyWindow is JsonElement weekly)
-        {
-            bars.Add(BuildWindowBar(weekly, Strings.T("provider.weekly"), isPrimary: true, qualifier: Strings.T("qualifier.weekly"), shortPrefix: Strings.T("prefix.weekly")));
-        }
+        var bars = BuildBars(usage);
 
         string? creditsLine = null;
         if (usage.TryGetProperty("credits", out var credits) && credits.ValueKind == JsonValueKind.Object
@@ -104,62 +95,91 @@ public sealed class ChatGptProvider : IUsageProvider
 
     private static void LogUsageShape(JsonElement usage)
     {
+        if (!AppSettings.DiagnosticsEnabled) return;
         try { File.AppendAllText(UsageDebugFile, $"{DateTime.Now:O} {usage.GetRawText()}\n"); } catch { /* best effort */ }
     }
 
     /// <summary>
     /// A plain ChatGPT Plus account's top-level "rate_limit" carries exactly
     /// two windows: primary_window is the 5h one, secondary_window is the
-    /// 7-day one. A Codex-enabled Pro account breaks that assumption — its
-    /// top-level rate_limit has only ONE window (a 7-day one, sitting under
-    /// the "primary_window" key despite not being the 5h window the key name
-    /// implies) and secondary_window is null. The real 5h+7day pair the user
-    /// actually cares about lives nested under
-    /// additional_rate_limits[].rate_limit instead (one entry per model,
-    /// e.g. "GPT-5.3-Codex-Spark"). So windows are classified by their
-    /// actual limit_window_seconds rather than trusted by key name, and a
-    /// source (top-level, or one additional_rate_limits entry) that yields a
-    /// complete 5h+weekly pair is preferred over mixing windows from
-    /// different sources, so both bars always describe the same quota
-    /// bucket. Confirmed against a real Pro/Codex account's raw payload
-    /// (chatgpt_usage_debug.txt) after the top-level-only assumption left
-    /// that account with a "5-hour limit" that was actually its weekly one,
-    /// and no weekly bar at all.
+    /// 7-day one — that account gets the usual 2 bars. A Codex-enabled Pro
+    /// account breaks that assumption in a way that turned out to need a
+    /// THIRD bar, not just a relabeled pair: its top-level rate_limit has
+    /// only ONE window (a 7-day one, sitting under the "primary_window" key
+    /// despite not being the 5h window the key name implies) and
+    /// secondary_window is null — but that lone top-level window is a real,
+    /// separate "general" weekly quota, not a stand-in for the model's own.
+    /// The model actually used (e.g. "GPT-5.3-Codex-Spark") has its own
+    /// complete 5h+7day pair nested under additional_rate_limits[].rate_limit,
+    /// with its own independent reset schedule. So an affected account shows
+    /// three numbers that all move separately: 5h (model), weekly (general),
+    /// weekly (model) — confirmed against a real Pro/Codex account's raw
+    /// payload (chatgpt_usage_debug.txt) after a first fix that only showed
+    /// the model's pair silently dropped the general weekly bar entirely.
+    /// Windows are classified by their actual limit_window_seconds rather
+    /// than trusted by key name throughout, since the "primary_window" key
+    /// lies about which window it is for this account type.
     /// </summary>
-    private static (JsonElement? fiveHour, JsonElement? weekly) FindWindows(JsonElement usage)
+    private static List<UsageBar> BuildBars(JsonElement usage)
     {
-        var sources = new List<JsonElement>();
+        var bars = new List<UsageBar>();
+
+        (JsonElement? fiveHour, JsonElement? weekly) top = (null, null);
         if (usage.TryGetProperty("rate_limit", out var topRateLimit) && topRateLimit.ValueKind == JsonValueKind.Object)
         {
-            sources.Add(topRateLimit);
+            top = ClassifyWindows(topRateLimit);
         }
+
+        JsonElement? modelFiveHour = null;
+        JsonElement? modelWeekly = null;
+        string? modelName = null;
         if (usage.TryGetProperty("additional_rate_limits", out var additional) && additional.ValueKind == JsonValueKind.Array)
         {
             foreach (var entry in additional.EnumerateArray())
             {
-                if (entry.TryGetProperty("rate_limit", out var entryRateLimit) && entryRateLimit.ValueKind == JsonValueKind.Object)
+                if (!entry.TryGetProperty("rate_limit", out var entryRateLimit) || entryRateLimit.ValueKind != JsonValueKind.Object)
                 {
-                    sources.Add(entryRateLimit);
+                    continue;
                 }
+                var (five, weekly) = ClassifyWindows(entryRateLimit);
+                if (five is null || weekly is null)
+                {
+                    continue;
+                }
+                modelFiveHour = five;
+                modelWeekly = weekly;
+                modelName = entry.TryGetProperty("limit_name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() : null;
+                break;
             }
         }
 
-        JsonElement? fallbackFiveHour = null;
-        JsonElement? fallbackWeekly = null;
-
-        foreach (var source in sources)
+        if (top.fiveHour is not null && top.weekly is not null)
         {
-            var (fiveHour, weekly) = ClassifyWindows(source);
-            if (fiveHour is not null && weekly is not null)
-            {
-                return (fiveHour, weekly);
-            }
-
-            fallbackFiveHour ??= fiveHour;
-            fallbackWeekly ??= weekly;
+            // Plain account: one bucket covers both windows, same as every
+            // other provider in this app.
+            bars.Add(BuildWindowBar(top.fiveHour.Value, Strings.T("provider.claude.5h"), isPrimary: false, Strings.T("qualifier.5h"), Strings.T("prefix.5h")));
+            bars.Add(BuildWindowBar(top.weekly.Value, Strings.T("provider.weekly"), isPrimary: true, Strings.T("qualifier.weekly"), Strings.T("prefix.weekly")));
+        }
+        else if (top.weekly is not null && modelFiveHour is not null && modelWeekly is not null)
+        {
+            // Codex-style account: three independent quotas.
+            bars.Add(BuildWindowBar(modelFiveHour.Value, Strings.T("provider.claude.5h"), isPrimary: false, Strings.T("qualifier.5h"), Strings.T("prefix.5h")));
+            bars.Add(BuildWindowBar(top.weekly.Value, Strings.T("provider.chatgpt.weekly_general"), isPrimary: true, Strings.T("qualifier.chatgpt.weekly_general"), Strings.T("prefix.weekly")));
+            var label = modelName is null ? Strings.T("provider.weekly") : Strings.F("provider.chatgpt.weekly_model", modelName);
+            var qualifier = modelName is null ? Strings.T("qualifier.weekly") : Strings.F("qualifier.chatgpt.weekly_model", modelName);
+            bars.Add(BuildWindowBar(modelWeekly.Value, label, isPrimary: false, qualifier, Strings.T("prefix.chatgpt.weekly_model")));
+        }
+        else
+        {
+            // Unrecognized/partial shape — fall back to whatever's
+            // available rather than showing nothing.
+            var fiveHour = top.fiveHour ?? modelFiveHour;
+            var weekly = top.weekly ?? modelWeekly;
+            if (fiveHour is not null) bars.Add(BuildWindowBar(fiveHour.Value, Strings.T("provider.claude.5h"), isPrimary: false, Strings.T("qualifier.5h"), Strings.T("prefix.5h")));
+            if (weekly is not null) bars.Add(BuildWindowBar(weekly.Value, Strings.T("provider.weekly"), isPrimary: true, Strings.T("qualifier.weekly"), Strings.T("prefix.weekly")));
         }
 
-        return (fallbackFiveHour, fallbackWeekly);
+        return bars;
     }
 
     private static (JsonElement? fiveHour, JsonElement? weekly) ClassifyWindows(JsonElement rateLimit)
